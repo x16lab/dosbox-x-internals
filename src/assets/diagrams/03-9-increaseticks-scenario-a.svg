@@ -1,0 +1,270 @@
+<svg viewBox="0 0 1000 900" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            /* Global */
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            /* Indigo — latched / pending / default active state */
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            /* Neutral inset panel (register/memory visualizations) */
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-hl-bg: #dbeafe;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #374151;
+            --offset-label: #374151;
+            --segment-label: #1d4ed8;
+
+            /* Green — dispatched / in-service / success */
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            /* Orange — blocking / warning / caveat */
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            /* Structural / page furniture */
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            /* Gray — idle / neutral */
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-hl-bg: #1e3a5f;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #e5e7eb;
+            --offset-label: #e5e7eb;
+            --segment-label: #60a5fa;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="500" y="36" text-anchor="middle" font-size="22" font-weight="700" fill="var(--fg-title)">increaseticks() Scenarios: Steady State vs. Stall &amp; Catch-Up</text>
+    <text x="500" y="58" text-anchor="middle" font-size="13" fill="var(--fg-subtitle)">Same three accumulators — ticksRemain, ticksDone, ticksScheduled — under two different host conditions</text>
+
+    <!-- ============================== PANEL A ============================== -->
+    <rect x="40" y="84" width="920" height="270" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)"/>
+    <text x="60" y="110" font-size="14" font-weight="700" fill="var(--indigo-label)">SCENARIO A — STEADY STATE</text>
+    <text x="60" y="128" font-size="11" fill="var(--indigo-note)">host keeps pace with the guest; every host ms drains exactly one guest ms</text>
+    <text x="900" y="110" text-anchor="end" font-size="11" font-style="italic" fill="var(--green-label)">ratio ≈ 1.0 (in sync)</text>
+
+    <!-- Lane 1: host wall-clock ticks -->
+    <text x="60" y="172" font-size="12" fill="var(--box-text)">Host wall-clock ticks</text>
+    <line x1="220" y1="168" x2="900" y2="168" stroke="var(--box-border)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <g>
+        <circle cx="220" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="305" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="390" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="475" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="560" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="645" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="730" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <circle cx="815" cy="168" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    </g>
+
+    <!-- connectors from host ticks to drain pulses -->
+    <g stroke="var(--dashed-line)" stroke-width="1" stroke-dasharray="2,2">
+        <line x1="220" y1="172" x2="220" y2="204"/>
+        <line x1="305" y1="172" x2="305" y2="204"/>
+        <line x1="390" y1="172" x2="390" y2="204"/>
+        <line x1="475" y1="172" x2="475" y2="204"/>
+        <line x1="560" y1="172" x2="560" y2="204"/>
+        <line x1="645" y1="172" x2="645" y2="204"/>
+        <line x1="730" y1="172" x2="730" y2="204"/>
+        <line x1="815" y1="172" x2="815" y2="204"/>
+    </g>
+
+    <!-- Lane 2: drain pulses (TIMER_AddTick, one per host ms) -->
+    <text x="60" y="214" font-size="12" fill="var(--box-text)">increaseticks() drain</text>
+    <text x="60" y="228" font-size="10" fill="var(--green-note)">(TIMER_AddTick × 1)</text>
+    <g fill="var(--green-border)">
+        <path d="M214,218 L226,218 L220,202 Z"/>
+        <path d="M299,218 L311,218 L305,202 Z"/>
+        <path d="M384,218 L396,218 L390,202 Z"/>
+        <path d="M469,218 L481,218 L475,202 Z"/>
+        <path d="M554,218 L566,218 L560,202 Z"/>
+        <path d="M639,218 L651,218 L645,202 Z"/>
+        <path d="M724,218 L736,218 L730,202 Z"/>
+        <path d="M809,218 L821,218 L815,202 Z"/>
+    </g>
+
+    <!-- Lane 3: cumulative accumulators, matched growth -->
+    <text x="60" y="246" font-size="12" fill="var(--box-text)">ticksDone (green) /</text>
+    <text x="60" y="260" font-size="12" fill="var(--box-text)">ticksScheduled (indigo)</text>
+    <line x1="200" y1="340" x2="900" y2="340" stroke="var(--footer-line)" stroke-width="1"/>
+    <g stroke-width="1.5">
+        <rect x="210" y="336" width="8" height="4" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="220" y="336" width="8" height="4" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="295" y="332" width="8" height="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="305" y="332" width="8" height="8" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="380" y="328" width="8" height="12" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="390" y="328" width="8" height="12" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="465" y="324" width="8" height="16" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="475" y="324" width="8" height="16" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="550" y="320" width="8" height="20" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="560" y="320" width="8" height="20" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="635" y="316" width="8" height="24" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="645" y="316" width="8" height="24" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="720" y="312" width="8" height="28" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="730" y="312" width="8" height="28" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <rect x="805" y="308" width="8" height="32" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <rect x="815" y="308" width="8" height="32" fill="var(--green-bg)" stroke="var(--green-border)"/>
+    </g>
+
+    <!-- ============================== PANEL B ============================== -->
+    <rect x="40" y="384" width="920" height="330" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)"/>
+    <text x="60" y="410" font-size="14" font-weight="700" fill="var(--indigo-label)">SCENARIO B — STALL, THEN CATCH-UP</text>
+    <text x="60" y="428" font-size="11" fill="var(--indigo-note)">host preempted for ~8 ms; the backlog drains in one bounded burst (≤ 20 ms cap)</text>
+
+    <!-- Lane 1: host wall-clock ticks, with a stall -->
+    <text x="60" y="474" font-size="12" fill="var(--box-text)">Host wall-clock ticks</text>
+    <line x1="220" y1="470" x2="900" y2="470" stroke="var(--box-border)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <circle cx="220" cy="470" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <circle cx="305" cy="470" r="4" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+
+    <!-- stall bracket -->
+    <g stroke="var(--orange-border)" stroke-width="1.5">
+        <line x1="305" y1="490" x2="305" y2="498"/>
+        <line x1="305" y1="498" x2="560" y2="498"/>
+        <line x1="560" y1="490" x2="560" y2="498"/>
+    </g>
+    <text x="432" y="512" text-anchor="middle" font-size="11" fill="var(--orange-label)">host preempted (~8 real ms elapse; ticksRemain stays 0)</text>
+
+    <!-- sample point marker -->
+    <path d="M560,463 L567,470 L560,477 L553,470 Z" fill="var(--orange-border)"/>
+    <text x="560" y="452" text-anchor="middle" font-size="11" fill="var(--orange-label)">increaseticks(): GetTicks() sampled → ticksRemain = 8</text>
+
+    <!-- connector from sample point to burst -->
+    <path d="M560,478 L560,510 L580,510 L580,528" fill="none" stroke="var(--orange-border)" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+
+    <!-- Lane 2: burst drain -->
+    <text x="60" y="564" font-size="12" fill="var(--box-text)">drain loop</text>
+    <text x="60" y="578" font-size="10" fill="var(--green-note)">(TIMER_AddTick × 8, ≤ 20 cap)</text>
+    <g stroke="var(--green-border)" stroke-width="1.5">
+        <line x1="577" y1="536" x2="577" y2="542"/>
+        <line x1="577" y1="536" x2="695" y2="536"/>
+        <line x1="695" y1="536" x2="695" y2="542"/>
+    </g>
+    <text x="636" y="530" text-anchor="middle" font-size="11" fill="var(--green-label)">burst-drains the 8 ms backlog in this one pass</text>
+    <g fill="var(--green-border)">
+        <path d="M574,560 L586,560 L580,545 Z"/>
+        <path d="M590,560 L602,560 L596,545 Z"/>
+        <path d="M606,560 L618,560 L612,545 Z"/>
+        <path d="M622,560 L634,560 L628,545 Z"/>
+        <path d="M638,560 L650,560 L644,545 Z"/>
+        <path d="M654,560 L666,560 L660,545 Z"/>
+        <path d="M670,560 L682,560 L676,545 Z"/>
+        <path d="M686,560 L698,560 L692,545 Z"/>
+    </g>
+
+    <!-- Lane 3: debt (orange) then catch-up (indigo) reconciled against ticksDone (green outline) -->
+    <text x="60" y="614" font-size="12" fill="var(--box-text)">ticksDone (orange debt) /</text>
+    <text x="60" y="628" font-size="12" fill="var(--box-text)">ticksScheduled (indigo catch-up)</text>
+    <line x1="200" y1="700" x2="900" y2="700" stroke="var(--footer-line)" stroke-width="1"/>
+
+    <!-- ticksDone jumps to 8 (scaled) the instant it's sampled -->
+    <rect x="553" y="668" width="14" height="32" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="560" y="660" text-anchor="middle" font-size="10" fill="var(--orange-label)">ticksDone += 8</text>
+
+    <!-- ticksScheduled climbs one drain at a time until it matches -->
+    <g stroke="var(--indigo-border)" stroke-width="1.5" fill="var(--indigo-bg)">
+        <rect x="575" y="696" width="10" height="4"/>
+        <rect x="591" y="692" width="10" height="8"/>
+        <rect x="607" y="688" width="10" height="12"/>
+        <rect x="623" y="684" width="10" height="16"/>
+        <rect x="639" y="680" width="10" height="20"/>
+        <rect x="655" y="676" width="10" height="24"/>
+        <rect x="671" y="672" width="10" height="28"/>
+        <rect x="687" y="668" width="10" height="32"/>
+    </g>
+    <text x="705" y="663" font-size="11" fill="var(--green-label)">→ ticksScheduled catches ticksDone</text>
+
+    <!-- ============================== FOOTER ============================== -->
+    <line x1="40" y1="738" x2="960" y2="738" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="40" y="764" font-size="13" font-weight="700" fill="var(--footer-text)">Same accumulators, two outcomes</text>
+    <text x="40" y="784" font-size="12" fill="var(--footer-subtext)">Scenario A drains ticksRemain one guest-ms at a time in lockstep with the host clock;</text>
+    <text x="40" y="800" font-size="12" fill="var(--footer-subtext)">Scenario B lets a real-time debt accumulate during a stall, then discharges it as a single bounded burst.</text>
+
+    <!-- legend chips -->
+    <g font-size="11" fill="var(--footer-text)">
+        <rect x="40" y="816" width="14" height="14" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+        <text x="60" y="827">Host clock sample</text>
+
+        <rect x="220" y="816" width="14" height="14" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+        <text x="240" y="827">ticksScheduled (guest ms budgeted)</text>
+
+        <rect x="480" y="816" width="14" height="14" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+        <text x="500" y="827">ticksDone (real ms accounted)</text>
+
+        <rect x="720" y="816" width="14" height="14" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+        <text x="740" y="827">Stall debt / blocking</text>
+    </g>
+
+    <text x="40" y="850" font-size="11" font-style="italic" fill="var(--orange-footnote)">The catch-up burst is capped at 20 emulated ms per increaseticks() pass (dosbox.cpp:627–629);</text>
+    <text x="40" y="866" font-size="11" font-style="italic" fill="var(--orange-footnote)">a longer deschedule drains across multiple passes instead of one unbounded burst.</text>
+</svg>

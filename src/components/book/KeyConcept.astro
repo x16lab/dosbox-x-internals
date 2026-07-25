@@ -1,0 +1,62 @@
+---
+interface Props {
+  title?: string;
+}
+
+const { title = 'Key Concept' } = Astro.props;
+---
+
+<aside class="key-concept" aria-label={title}>
+  <div class="concept-header">
+    <span class="concept-icon">&#9650;</span>
+    <span class="concept-label">{title}</span>
+  </div>
+  <div class="concept-body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .key-concept {
+    margin: calc(var(--baseline) * 1.5) 0;
+    border: 1px solid var(--color-line-strong);
+    background: var(--color-surface);
+  }
+
+  .concept-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem var(--baseline);
+    border-bottom: 1px solid var(--color-line);
+    background: var(--color-soft);
+  }
+
+  .concept-icon {
+    color: var(--color-accent);
+    font-size: 0.7rem;
+  }
+
+  .concept-label {
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .concept-body {
+    padding: var(--baseline);
+  }
+
+  .concept-body :global(p) {
+    margin: 0 0 0.75rem;
+    color: var(--color-muted);
+    line-height: 1.7;
+  }
+
+  .concept-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+</style>

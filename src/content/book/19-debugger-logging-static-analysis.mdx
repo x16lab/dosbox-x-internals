@@ -1,0 +1,574 @@
+---
+title: "Debugging and Instrumentation"
+description: "How DOSBox-X's integrated ncurses debugger patches INT3 into guest memory, why the dynamic recompiler makes single-stepping and breakpoints fundamentally harder to trust, how LOG_MSG and DEBUG_ShowMsg turn out to be the same function, and why instrumentation is best understood as an architectural layer that makes the emulator observable — not a feature bolted onto it."
+order: 19
+chapterSlug: "debugger-logging-static-analysis"
+part: "host-integration"
+---
+
+# Chapter 19 — Debugging and Instrumentation {#chapter-19-debugging-and-instrumentation}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+Every chapter in this book so far has been about DOSBox-X convincing a guest program that real hardware exists underneath it. This chapter is about the one tool that lets *you* see through that convincing — and about the specific, structural ways that tool has to behave differently from a debugger attached to a real process, because the thing on the other end of it isn't a process. It's an entire simulated computer, CPU and PIC and PIT and DMA controller all still quietly running while you're staring at a frozen instruction pointer.
+
+### Source map for this chapter {#source-map-for-this-chapter}
+
+| Subsystem | DOSBox-X location |
+|---|---|
+| Debugger core (breakpoints, commands, main loop) | `src/debug/debug.cpp` |
+| Debugger window layout (ncurses) | `src/debug/debug_gui.cpp`, `src/debug/debug_inc.h` |
+| Disassembler | `src/debug/debug_disasm.cpp`, `src/debug/disasm_tables.h` |
+| Logging (`LOG_MSG` / `LOG()` / severity filtering) | `include/logging.h`, `src/debug/debug_gui.cpp` |
+| Dynamic recompiler / breakpoint interaction | `src/cpu/core_dyn_x86.cpp`, `src/cpu/core_dynrec.cpp`, `src/cpu/core_dyn_x86/cache.h` |
+| Interpreter core (per-instruction breakpoint check) | `src/cpu/core_normal.cpp` |
+
+## 19.1 Debugging a Machine That Doesn't Exist {#debugging-a-machine-that-doesn-t-exist}
+
+Attach a native debugger to a real process and you get something reassuringly simple underneath: one instruction stream, one address space, a CPU that genuinely stops the instant you ask it to. Attach DOSBox-X's debugger to a running DOS program and none of that is quite true anymore, because "the debugger" and "the thing being debugged" are both just code running inside the same host process — DOSBox-X's debugger isn't a separate program peering into another one across a system call boundary, it's a mode switch inside the same emulator loop that's also driving the PIC, the PIT, every device chapter in this book.
+
+That has real consequences, and DOSBox-X's own source code is candid about several of them. `DEBUG_Loop()` (`src/debug/debug.cpp`), the function that replaces the ordinary main loop for as long as you're sitting at the debugger prompt, still calls `PIC_runIRQs()` on every iteration:
+
+```cpp
+else {
+    //TODO Disable sound
+    GFX_Events();
+    // Interrupt started ? - then skip it
+    uint16_t oldCS  = SegValue(cs);
+    uint32_t oldEIP = reg_eip;
+    PIC_runIRQs();
+    SDL_Delay(1);
+```
+
+Freezing the CPU's instruction pointer at a breakpoint does not freeze the rest of the simulated machine — the PIT keeps ticking, hardware IRQs keep arriving and getting serviced by whatever handler the guest installed, exactly as @chapter(main-loop-and-event-scheduler)'s scheduler and @chapter(interrupts-exceptions-pic)'s interrupt machinery would produce if nothing had stopped at all. A native debugger attached to one process doesn't have this problem, because pausing that one process's threads pauses everything the debugger cares about. Pausing DOSBox-X's guest CPU pauses only the guest CPU; the rest of the simulated PC — the part every other chapter in this book has been about — keeps running underneath you.
+
+The reverse coupling shows up too: even printing a log message can reach into the CPU scheduler. `DEBUG_ShowMsg()`, the single function every `LOG_MSG` call in the entire codebase ultimately reaches (more on that in @section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host)), does this before it does anything else:
+
+```cpp
+// in case of runaway error from the CPU core, user responsiveness can be helpful
+CPU_CycleLeft += CPU_Cycles;
+CPU_Cycles = 0;
+```
+
+That's not incidental bookkeeping. If some guest condition causes a flood of log messages — an interrupt handler that logs on every entry, say, caught in a tight loop — nothing else in the emulator would ever get a chance to run, because the CPU core's cycle budget wouldn't be exhausted until the host itself ran out of message-printing time. Zeroing `CPU_Cycles` on every logged message forces the core to yield back to the main loop regardless, which is DOSBox-X quietly protecting its own responsiveness against a debugging feature that could otherwise wedge the whole emulator. None of this is a concern a native debugger's author ever has to think about, because a native debugger was never also the thing responsible for keeping the debugged program's simulated hardware alive.
+
+## 19.2 Instrumentation as an Architectural Layer {#instrumentation-as-an-architectural-layer}
+
+@section(debugger-logging-static-analysis/debugging-a-machine-that-doesn-t-exist) kept saying "the debugger" as if it were one thing — a curses screen, a set of commands, a place breakpoints live. It's worth stepping back before going any further, because that framing undersells what's actually going on. You might wonder why a chapter about a debugger keeps reaching for words like "architecture" and "layer" instead of just walking through commands one at a time. The reason is that DOSBox-X's debugger, its logging, its tracing, and its profiling counters are not four separate features that happen to share a source directory — they're four faces of one underlying concern, which is distinct from emulation itself and deserves its own name: **instrumentation**.
+
+**Emulation** is the part of DOSBox-X this entire book has otherwise been about: reproducing what real PC hardware *does*. A Sound Blaster's DSP really does interpret command bytes and drive a DMA transfer (@chapter(sound)); a UART really does turn a baud rate into a scheduled bit-time delay (@chapter(serial-parallel-peripherals)); DOS really does walk an MCB chain to find free memory (@chapter(the-dos-kernel)). Every one of those is emulation: behavior, reproduced faithfully, because faithful behavior is the entire point of running DOS software on top of this thing at all.
+
+**Instrumentation** is different in kind, not just in scope. It's the part of DOSBox-X that *observes* behavior without being the behavior — the mechanism by which a `0xCC` byte can sit in guest memory and report that execution reached it, without changing what any other instruction does; the mechanism by which `LOG(LOG_SB, LOG_WARN)(...)` can announce that a DMA transfer had no channel assigned, without that announcement being part of what "having no DMA channel assigned" actually means to the emulated hardware. Emulation answers "what does this PC do." Instrumentation answers "what did this PC just do, and how do I know."
+
+That distinction becomes concrete once you draw where instrumentation actually sits relative to the emulation core it's watching:
+
+```
+                  DOS Program
+                       |
+                       v
+                Emulation Core
+                       |
+              +--------+--------+
+              |                 |
+       Hardware model     Instrumentation
+      (CPU, memory, PIC,        |
+       DMA, VGA, sound...)      |
+                          debugger / tracing /
+                          logging / profiling
+```
+
+The hardware model and instrumentation both sit *beside* the emulation core, not inside each other, and that's a deliberate architectural fact, not just a diagram convenience. A DSP command dispatch (@chapter(sound)) doesn't call into the debugger to do its job; it calls `LOG()` only incidentally, as a side channel, and would function identically with logging compiled out entirely. Conversely, @section(debugger-logging-static-analysis/how-the-debugger-is-organized)'s breakpoint mechanism doesn't know anything about DMA, sound, or VGA — it operates on addresses and memory values in the abstract, indifferent to which device chapter's code happens to be sitting at the address it's watching. The two halves communicate through narrow, well-defined seams — a function call here (`LOG_MSG`), a byte patched into memory there (`0xCC`) — precisely so that neither has to understand the internals of the other.
+
+This is why "instrumentation" is the more accurate word for what this chapter covers than "debugger" alone. The curses screen from @section(debugger-logging-static-analysis/debugging-a-machine-that-doesn-t-exist) is one *consumer* of instrumentation — arguably the most visible one — but the underlying layer exists independently of whether that screen is ever drawn. A `LOG_SB` warning fires whether or not you've ever pressed Alt+Pause in a given session; a `BPINT` breakpoint's guest-memory patch persists across resumed execution whether or not the debugger window is currently in front of you. Instrumentation is the always-present observability layer; the interactive debugger is the interface that happens to sit on top of the most interactive parts of it.
+
+## 19.3 Observation Points {#observation-points}
+
+If instrumentation is a layer alongside the emulation core rather than inside it, the natural next question is where, specifically, that layer actually taps into the running machine. DOSBox-X doesn't instrument uniformly — it can't, for reasons @section(debugger-logging-static-analysis/what-carries-forward) covers in detail — so it instead exposes a specific, deliberately chosen set of observation points, each suited to what that particular subsystem tends to need debugging for.
+
+**CPU execution and decoding.** The most granular observation point in the whole emulator: `DEBUG_HeavyIsBreakpoint()`, called at the top of every single instruction's fetch-decode-execute cycle in the interpreter core (`core_normal.cpp`, @section(debugger-logging-static-analysis/debugger-integration-the-execution-check-loop) traces this in full). What's observed is simply "we are about to execute the instruction at this `CS:EIP`." It matters because every other CPU-level mechanism in this chapter — physical breakpoints, instruction tracing, `logHeavy`'s ring buffer — is built on top of this one checkpoint being reached reliably, every instruction, in order.
+
+**Interrupts and exceptions.** `BPINT`, @section(debugger-logging-static-analysis/instrumentation-as-an-architectural-layer)'s `EBreakpoint::BKPNT_INTERRUPT`, filtered optionally down to a specific `AH`, and — independently of any breakpoint — extensive `LOG(LOG_CPU, ...)` calls scattered through `cpu.cpp`'s protected-mode control-transfer code: gate dispatches, task switches, `IRET` across privilege levels, all logged at `LOG_NORMAL` when enabled. This matters specifically because interrupts are DOS's entire calling convention (@chapter(the-dos-kernel)) — a program using DOS or the BIOS (@chapter(the-bios-layer)) is a program mostly *doing* interrupts, which makes an interrupt-level observation point far more useful for understanding a DOS program's behavior than a purely instruction-level one would be on its own.
+
+**Memory access.** `BKPNT_MEMORY`, `BKPNT_MEMORY_PROT`, `BKPNT_MEMORY_LINEAR`, and `BKPNT_MEMORY_FREEZE` — @section(debugger-logging-static-analysis/instrumentation-mechanisms-the-full-toolbox) covers exactly how these work, and it's worth flagging now that the mechanism is a poll, not a trap: DOSBox-X has no hardware memory-breakpoint facility to lean on, so it re-reads the watched byte on every check and compares it against what it was last time. This matters for the same reason a native reverse engineer reaches for a memory breakpoint at all — to find out *what code* is responsible for a value changing, when you don't already know where to look for it.
+
+**Paging.** A different shape entirely from the above: not a hook that fires on an event, but an on-demand state dump. The `PAGING` debugger command (`LogPages()`, `src/debug/debug.cpp`) walks the guest's own x86 page directory and page tables directly, dereferencing the actual page-table entries in guest memory and printing present/user/write/dirty/accessed bits per page:
+
+```cpp
+sprintf(out1,"page %05Xxxx -> %04Xxxx  flags [uw] %x:%x::%x:%x [d=%x|a=%x]",
+        i,entry.block.base,entry.block.us,table.block.us,
+        entry.block.wr,table.block.wr,entry.block.d,entry.block.a);
+```
+
+It matters because paging bugs are rarely a single instruction's fault — they're a structural property of the whole table at a moment in time, and a state dump answers "what does the table actually look like right now" far more directly than a trap on some specific address ever could.
+
+**I/O ports and device registers.** `LOG_IO`, wired into the *default* port handler — the one that answers a read or write to a port no device claimed:
+
+```cpp
+static Bitu IO_ReadDefault(Bitu port,Bitu iolen) {
+    ...
+    LOG(LOG_IO,LOG_WARN)("Read from port %04X",(int)port);
+    io_readhandlers[0][port]=IO_ReadBlocked;
+```
+
+Notice what happens on the very next line: the handler replaces *itself* with a silent stub after the first warning, so an unclaimed port that's polled in a tight loop logs exactly once rather than flooding the console. This matters because an unclaimed I/O access is very often a program probing for hardware DOSBox-X hasn't modeled — or hasn't been configured to model — and a single clear warning is far more diagnostically useful than the same message repeated ten thousand times a second.
+
+**PIC and scheduler events.** `LOG_PIC` and `LOG_PIT` cover interrupt-controller reprogramming and timer configuration respectively, and — as @section(debugger-logging-static-analysis/debugging-a-machine-that-doesn-t-exist) already showed — the scheduler doesn't stop just because the debugger is active; `PIC_runIRQs()` keeps servicing hardware interrupts through every iteration of `DEBUG_Loop()`. This matters because the PIC and PIT are what every other timed device in this book (the PIT-driven UART bytetime of @chapter(serial-parallel-peripherals), the DMA callback pacing of @chapter(sound)) ultimately depends on — a scheduling bug rarely announces itself at the instruction that caused it, only downstream, in whichever device's timing came out wrong.
+
+**DMA.** `LOG_DMACONTROL`, which — beyond ordinary play-by-play — doubles as an internal consistency check DOSBox-X runs against its own emulation:
+
+```cpp
+LOG(LOG_DMACONTROL,LOG_WARN)("BUG: Attempted DMA channel read while channel masked");
+```
+
+That message isn't describing guest behavior at all — it's DOSBox-X catching itself doing something its own DMA model considers invalid. This matters because it's a reminder that instrumentation doesn't only exist to catch guest bugs; some of it exists to catch DOSBox-X's *own*.
+
+**VGA.** `LOG_VGA`, `LOG_VGAGFX`, `LOG_VGAMISC`, and `LOG_INT10` split video logging by which of VGA's several register groups (@chapter(vga-emulation)'s whole subject) is involved, right down to specific unknown-register warnings:
+
+```cpp
+LOG(LOG_VGAMISC,LOG_NORMAL)("VGA:DAC:Illegal Pel Index");           //If this can actually happen that will be the day
+```
+
+— a comment that's really a small piece of the maintainer's own confidence in the model showing through. It matters because VGA has enough independent register blocks (@chapter(vga-emulation) already made this case at length) that a single undifferentiated "VGA logging" flag would be nearly useless for isolating which block a bug actually lives in.
+
+**Sound Blaster.** `LOG_SB`, already quoted extensively in @chapter(sound) — "DMA transfer initiated with no channel assigned" and its neighbors are this exact observation point in action. It matters for the same reason the DSP's own command dispatch (@chapter(sound)) matters: sound hardware's failure modes are usually silent ones (no audio, or wrong audio) rather than a crash, and a log line is often the only signal that something went wrong at all.
+
+## 19.4 How the Debugger Is Organized {#how-the-debugger-is-organized}
+
+The debugger is not a separate build of DOSBox-X — it's compiled directly into the same binary, gated almost entirely behind one preprocessor flag, `C_DEBUG`, and built on `curses`:
+
+```cpp
+#if C_DEBUG
+#include <curses.h>
+```
+
+That's the first line of real content in `debug_inc.h`, and it settles a question worth asking up front: DOSBox-X's debugger is a text-mode console application running alongside the emulator's own graphical output, not a panel bolted onto the SDL window. On Windows this means allocating a console; on macOS and Linux it means the debugger is only usable if DOSBox-X was actually launched from a terminal — `DEBUG_Enable_Handler()` checks `isatty(0)`/`isatty(1)`/`isatty(2)` before allowing it to activate at all, since there's no guarantee a GUI-launched instance has any terminal to draw into.
+
+The screen itself is organized as a `DBGBlock`, a small object owning five real `ncurses` windows plus an input line:
+
+```cpp
+enum {
+    /* main not counted */
+    WINI_REG,
+    WINI_DATA,
+    WINI_CODE,
+    WINI_VAR,
+    WINI_OUT,
+    /* inp not counted */
+    WINI_MAX_INDEX
+};
+```
+
+each with its own default height, title, and visibility, defined right alongside it:
+
+```cpp
+const unsigned int dbg_def_win_height[DBGBlock::WINI_MAX_INDEX] = { 7, 9, 12, 5, 6 };
+const char *dbg_def_win_titles[DBGBlock::WINI_MAX_INDEX] = {
+    "Register Overview", "Data Overview", "Code Overview", "Variable Overview", "Output"
+};
+const char *dbg_win_names[DBGBlock::WINI_MAX_INDEX] = { "REG", "DATA", "CODE", "VAR", "OUT" };
+```
+
+REG shows the CPU's general-purpose and segment registers; DATA is a live memory hexdump, switchable between segmented, virtual, and physical addressing modes (`DBGBlock::DATV_SEGMENTED`/`DATV_VIRTUAL`/`DATV_PHYSICAL` — three different answers to "what does this address mean," a distinction this book's memory chapter already made necessary); CODE is the live disassembly around the current instruction pointer, built on the same `DasmI386` disassembler @section(debugger-logging-static-analysis/what-happens-when-you-press-alt-pause) covers in detail; VAR holds user-defined named watch variables; OUT is the scrolling message console — and, as @section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host) will show, it's the same console that ordinary emulator logging writes into, not a separate debug-only text stream.
+
+Underneath the windows sits `CBreakpoint`, a plain C++ class managing a `std::list<CBreakpoint*>` of active breakpoints, distinguished by an `EBreakpoint` type:
+
+```cpp
+enum EBreakpoint { BKPNT_UNKNOWN, BKPNT_PHYSICAL, BKPNT_INTERRUPT, BKPNT_MEMORY, BKPNT_MEMORY_PROT, BKPNT_MEMORY_LINEAR, BKPNT_MEMORY_FREEZE };
+```
+
+reachable from the debugger's command line through a small, memorable vocabulary: `BP seg:off` for an ordinary code breakpoint, `BPINT int [AH] [AL]` for an interrupt breakpoint — optionally filtered down to one specific AH, or one specific AH:AL pair — `BPMEM` for a value-change watchpoint, and `BPPM`/`BPLM` for protected-mode and flat-linear-address variants of the same idea. `BPINT 21 AH=3D` is worth pausing on specifically: it's the debugger command that would stop execution the instant a guest program's `INT 21h` call carries `AH=0x3D` in it — @chapter(the-dos-kernel)'s `DOS_OpenFile` dispatch case, reached with nothing more than a one-line command, no source modification, no recompilation of anything.
+
+## 19.5 What Happens When You Press Alt+Pause {#what-happens-when-you-press-alt-pause}
+
+The binding itself is registered during startup, alongside every other hotkey DOSBox-X owns:
+
+```cpp
+MAPPER_AddHandler(DEBUG_Enable_Handler,
+#if defined(MACOSX)
+    // MacOS     NOTE: ALT-F12 to launch debugger. pause maps to F16 on macOS,
+    // which is not easy to input on a modern mac laptop
+    MK_f12
+#else
+    MK_pause
+#endif
+    ,MMOD2,"debugger","Show debugger",&item);
+```
+
+`MK_pause` with modifier `MMOD2` (Alt, on the platforms where this matters) is the ordinary case; the macOS branch swaps in Alt+F12 instead, with a comment explaining exactly why — the Pause key doesn't exist in any convenient form on a modern Mac keyboard, where it's remapped to F16, so DOSBox-X just picks a key a Mac user can actually press. It's a small thing, but it's a good reminder that even a hotkey binding in this codebase tends to carry a specific, documented reason rather than being arbitrary.
+
+Pressing it calls `DEBUG_Enable_Handler(bool pressed)`, which is written as a toggle rather than a one-way switch — call it again and it resumes rather than doing nothing. The resume path is where the interesting cleanup happens:
+
+```cpp
+if (debugging) {
+    ...
+    CBreakpoint::ActivateBreakpointsExceptAt(SegPhys(cs)+reg_eip);
+    DOSBOX_SetNormalLoop();
+    GFX_SetTitle(-1,-1,-1,is_paused);
+}
+```
+
+`ActivateBreakpointsExceptAt` re-arms every breakpoint except the one sitting at the address execution is about to resume from — otherwise resuming from a breakpoint would just walk one instruction and immediately re-trigger the same breakpoint it was already stopped at, since (as @section(debugger-logging-static-analysis/how-the-debugger-is-organized) will show) a physical breakpoint is a literal `0xCC` byte still sitting in guest memory at that address until it's explicitly deactivated. `DOSBOX_SetNormalLoop()` swaps the main loop's function pointer back from `DEBUG_Loop` to the ordinary one, and that's the entire mechanism by which "the debugger" and "normal emulation" are two different states of the same running program rather than two different programs.
+
+Entering the debugger, rather than resuming from it, ultimately funnels through `DEBUG_EnableDebugger()`:
+
+```cpp
+Bitu DEBUG_EnableDebugger(void)
+{
+    exitLoop = true;
+    if (!debugging || (debugging && debug_running))
+        DEBUG_Enable_Handler(true);
+    CPU_CycleLeft += CPU_Cycles;
+    CPU_Cycles = 0;
+    return 0;
+}
+```
+
+and this function is not only reachable from a hotkey. It's registered as a genuine DOSBox-X callback the same way every synthetic entry point this book has traced back to @chapter(the-bios-layer)'s callback mechanism is:
+
+```cpp
+debugCallback=CALLBACK_Allocate();
+CALLBACK_Setup(debugCallback,DEBUG_EnableDebugger,CB_RETF,"debugger");
+```
+
+which means a breakpoint hit deep inside a CPU core doesn't call `DEBUG_EnableDebugger()` directly — it returns `debugCallback`, the allocated callback ID, up through the core's own return value, and it's the outer dispatch loop (the same one that resolves every other callback ID this book has encountered, from BIOS interrupt stubs to DOS's own `INT 21h` entry point) that recognizes it and invokes the handler. Alt+Pause and a triggered breakpoint arrive at the exact same function through two structurally different paths — one from the host's keyboard event queue, one from deep inside a CPU core's instruction loop — because DOSBox-X built exactly one door into the debugger and made sure everything that needs to open it uses the same doorknob.
+
+## 19.6 Debugger Integration: The Execution-Check Loop {#debugger-integration-the-execution-check-loop}
+
+@section(debugger-logging-static-analysis/what-happens-when-you-press-alt-pause) traced one specific way into the debugger — a hotkey. It's worth generalizing the shape of the check that runs on *every* path in, because it's the same shape whether the trigger is a human pressing Alt+Pause, a breakpoint patched into guest memory, or a watchpoint noticing a byte changed:
+
+```
+CPU executes
+      |
+      v
+Instrumentation checks
+      |
+      +--> breakpoint?
+      +--> watchpoint?
+      +--> tracing enabled?
+      |
+      v
+Continue
+```
+
+This loop is what @section(debugger-logging-static-analysis/observation-points) called the CPU's observation point, made concrete as control flow. In the interpreter core, it's `DEBUG_HeavyIsBreakpoint()` sitting at the top of every instruction (@section(debugger-logging-static-analysis/why-the-dynamic-core-complicates-all-of-this) shows exactly where); in the ordinary, non-heavy build it's implicit in the `0xCC` opcode itself — the CPU core doesn't check anything extra at all, it simply executes whatever byte is actually sitting in memory, and if that byte happens to be `0xCC` because `CBreakpoint::Activate()` put it there, the CPU's own `INT3` handling is what notices. Either way, the answer to "breakpoint?", "watchpoint?", or "tracing enabled?" is almost always "no" — and the loop has to fall through to **Continue** cheaply enough that asking the question doesn't itself become the bottleneck (@section(debugger-logging-static-analysis/what-carries-forward) puts a number on exactly how cheap that has to be).
+
+When the answer is "yes," what actually happens is a specific sequence, not just an abstract "the debugger opens." Execution genuinely **stops** — the CPU core returns `debugCallback` (or, for the non-heavy `0xCC` path, the guest's own `INT3` reaches `CPU_Exception`, which recognizes it as the debug trap and takes the same path) instead of continuing to the next instruction. Control passes to `DEBUG_EnableDebugger()`, which does the bookkeeping @section(debugger-logging-static-analysis/what-happens-when-you-press-alt-pause) already showed — zeroing `CPU_Cycles`, calling `DEBUG_Enable_Handler(true)` — and the main loop swaps over to `DEBUG_Loop()`. From there you're **inspecting state**: the REG, DATA, and CODE windows from @section(debugger-logging-static-analysis/how-the-debugger-is-organized) are all just live views into the same guest memory and register set the CPU core was about to touch next, nothing hidden or reconstructed, because nothing about hitting a breakpoint required tearing anything down. And **resuming** means walking the sequence backward — `ActivateBreakpointsExceptAt()` re-arms everything except the address you're standing on, `DOSBOX_SetNormalLoop()` hands the main loop back to ordinary execution, and the CPU core picks up exactly where it left off, because it was never actually torn down, only paused.
+
+## 19.7 Breakpoints: Patching the Guest, Not the Host {#breakpoints-patching-the-guest-not-the-host}
+
+A native debugger sets a breakpoint by writing `0xCC` — the x86 `INT3` opcode — into the target process's own memory at the desired address, trapping when the CPU executes it and letting the debugger's signal handler take over. DOSBox-X's `CBreakpoint::Activate()` does exactly this, just against guest memory instead of a host process's:
+
+```cpp
+void CBreakpoint::Activate(bool _active)
+{
+#if !C_HEAVY_DEBUG
+    if (GetType() == BKPNT_PHYSICAL) {
+        if (_active) {
+            // Set 0xCC and save old value
+            uint8_t data = mem_readb(location);
+            if (data != 0xCC) {
+                oldData = data;
+                mem_writeb(location,0xCC);
+            } else if (!active) {
+                // Another activate breakpoint is already here.
+                // Find it, and copy its oldData value
+                CBreakpoint *bp = FindOtherActiveBreakpoint(location, this);
+                if (!bp || bp->oldData == 0xCC) {
+                    DEBUG_ShowMsg("DEBUG: Internal error while activating breakpoint.\n");
+                    oldData = 0xCC;
+                } else
+                    oldData = bp->oldData;
+            };
+        } else {
+            ...
+```
+
+The original byte is saved in `oldData` and restored on deactivation — the identical save-and-restore discipline any native debugger uses, and the identical failure mode it has to guard against, too: two breakpoints set at the same address would otherwise each try to save and restore a byte that, the second time around, is already `0xCC` rather than the real original instruction. `FindOtherActiveBreakpoint` exists purely to handle that collision correctly, borrowing the first breakpoint's saved `oldData` instead of accidentally saving `0xCC` as if it were the real instruction underneath.
+
+`mem_writeb(location, 0xCC)` is worth sitting with for a moment, because it's an entirely ordinary guest memory write — the same function every device chapter in this book has watched DOS software use, routed through the identical `PageHandler` machinery. Setting a breakpoint doesn't call some special debugger-only memory-poking API; it goes through the front door, which — as @section(debugger-logging-static-analysis/debugger-integration-the-execution-check-loop) will show — turns out to matter a great deal once the dynamic recompiler is involved.
+
+The `#if !C_HEAVY_DEBUG` guard at the top of that function is the first hint of something this chapter comes back to twice more: DOSBox-X can be built in a second debugging configuration, `C_HEAVY_DEBUG`, where physical breakpoints work completely differently — not by patching memory at all, but by checking every single instruction's address against the breakpoint list before it executes. @section(debugger-logging-static-analysis/debugger-integration-the-execution-check-loop) explains exactly why that second mode exists.
+
+## 19.8 The Disassembler and Instruction Tracing {#the-disassembler-and-instruction-tracing}
+
+The text the CODE window shows you, and the text every trace file in this chapter writes to disk, comes from one function: `DasmI386()` (`src/debug/debug_disasm.cpp`). It's worth knowing where it came from, because the file says so directly, in a comment chain that reads like a small piece of software archaeology in its own right:
+
+```
+/*
+    Ripped out some stuff from the mame release to only make it for 386's
+    Changed some variables to use the standard DOSBox data types
+    Added my callback opcode
+*/
+/* 2asm: Convert binary files to 80*86 assembler. Version 1.00
+ * Adapted by Andrea Mazzoleni for use with MAME
+ * ...
+ * The code was originally snaffled from the GNU C++ debugger, as ported
+ * to DOS by DJ Delorie and Kent Williams ... Extensively modified by
+ * Robin Hilliard in Jan and May 1992.
+```
+
+A disassembler that started life inside GNU's own C++ debugger, was ported to DOS, was pulled into the MAME arcade-emulation project as a standalone binary-to-assembly converter called `2asm`, and was pulled out of *that* to become DOSBox's disassembler — with one addition specific to this codebase: recognizing DOSBox-X's own synthetic callback opcode (the mechanism behind every BIOS stub and interrupt handler @chapter(the-bios-layer) traced), so that a callback address disassembles as something legible instead of garbage. It's entirely table-driven, which is what makes that kind of lineage survivable across three unrelated projects' worth of modification.
+
+`DasmI386` alone gets you one instruction's text. Turning that into a trace means calling it repeatedly and writing the result somewhere, and DOSBox-X actually has three separate mechanisms for that, aimed at three different situations.
+
+The `LOG` debugger command opens a bounded, on-disk trace — `LOGCPU.TXT` — and streams to it for a fixed number of instructions set at invocation time:
+
+```cpp
+if(cpuLogType == 2) {
+    ...
+    sprintf(tstamp,"%.6f",(double)PIC_FullIndex());
+    out << tstamp << " " << setw(4) << SegValue(cs) << ":" << setw(8) << reg_eip << "  " << dline << "  " << res << "  " << ibytes;
+}
+```
+
+At its most detailed verbosity level, every line carries a `PIC_FullIndex()` timestamp (@chapter(main-loop-and-event-scheduler)'s own emulated clock), the segmented `CS:EIP`, the disassembled instruction, an `AnalyzeInstruction` annotation, the raw instruction bytes, and — appended after, not shown above — the full register and flag state at that exact instant. This is a deliberate, user-initiated capture: you type `LOG`, specify how many instructions, and get a file.
+
+The second mechanism runs continuously and costs nothing until something goes wrong. Toggling `logHeavy` on doesn't write to disk at all — it fills a fixed-size in-memory ring buffer, `logInst[LOGCPUMAX]`, one entry per instruction, overwriting the oldest entry once the buffer wraps:
+
+```cpp
+TLogInst & inst = logInst[logCount];
+strcpy(inst.dline,dline);
+inst.s_cs = SegValue(cs);
+inst.eip  = reg_eip;
+...
+if (++logCount >= LOGCPUMAX) logCount = 0;
+```
+
+This is a flight recorder, not a log file, and it pays for itself specifically when the emulator crashes: `E_Exit()` (`src/misc/support.cpp`), DOSBox-X's own fatal-error function — the thing called when an internal invariant breaks badly enough that continuing isn't safe — calls `DEBUG_HeavyWriteLogInstruction()` before it does anything else, if this build has heavy debugging compiled in:
+
+```cpp
+void E_Exit(const char * format,...) {
+#if C_DEBUG && C_HEAVY_DEBUG
+    DEBUG_HeavyWriteLogInstruction();
+#endif
+```
+
+which drains the entire ring buffer to `LOGCPU_INT_CD.TXT` in order, oldest entry first. The result is exactly the last few thousand instructions the CPU actually executed, full register state included, right up to the moment of a fatal error — captured automatically, with no need to have predicted the crash and pre-armed a `LOG` command before it happened.
+
+## 19.9 Instrumentation Mechanisms: The Full Toolbox {#instrumentation-mechanisms-the-full-toolbox}
+
+Sections 17.6 through 17.8 walked three specific mechanisms — the execution-check loop, physical breakpoints, and instruction tracing — in enough depth to see how each is actually built. It's worth stepping back once more and laying out the complete set side by side, because DOSBox-X's instrumentation isn't one technique reused everywhere; it's a small family of techniques, each chosen for what a given observation point (@section(debugger-logging-static-analysis/observation-points)) actually needs.
+
+**Breakpoints** stop execution at a specific address — `BKPNT_PHYSICAL`, patched as a real `0xCC` (@section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host)). **Watchpoints** stop execution when a specific memory value *changes*, regardless of address — `BKPNT_MEMORY` and its variants (@section(debugger-logging-static-analysis/observation-points)'s memory observation point), which, unlike a physical breakpoint, work by polling rather than trapping: there's no CPU-level facility that fires an exception when a byte changes, so `CBreakpoint::CheckBreakpoint()` simply re-reads the watched byte on every check and compares:
+
+```cpp
+uint8_t value=0;
+if (mem_readb_checked((PhysPt)address,&value)) return false;
+if (bp->GetValue() != value) {
+    // Yup, memory value changed
+    ...
+    DEBUG_ShowMsg("DEBUG: Memory breakpoint %s: %04X:%04X - %02X -> %02X\n", ...);
+    bp->SetValue(value);
+    return true;
+}
+```
+
+— which is also why watchpoints are gated behind `#if C_HEAVY_DEBUG` entirely: a poll that has to run on every single instruction, for every active watchpoint, is exactly the kind of per-instruction cost the ordinary build is built to avoid. (One variant deserves a specific mention: `BKPNT_MEMORY_FREEZE` doesn't stop execution at all — it silently rewrites the address back to a fixed value the instant it changes, which is a memory *freeze*, the same idea behind classic cheat-cartridge and trainer tools, built out of the identical polling loop.)
+
+**Instruction tracing** (@section(debugger-logging-static-analysis/the-disassembler-and-instruction-tracing)) and **memory tracing** are the continuous cousins of breakpoints and watchpoints — instead of stopping when a condition is met, they record every instruction or every access, unconditionally, for as long as they're enabled. **I/O tracing** is `LOG_IO`'s default-handler warning (@section(debugger-logging-static-analysis/observation-points)) — narrower than full port tracing, since it only fires for *unclaimed* ports rather than every port access, which is a deliberate scope limit: every claimed port already has its own subsystem's `LOG` calls (`LOG_SB`, `LOG_VGAMISC`, `LOG_DMACONTROL`) doing that job with far more context than a generic port-number log line could offer. **Interrupt tracing** is `BPINT`'s filtered breakpoint form combined with `log_int21`'s unconditional form (@chapter(the-dos-kernel), @section(debugger-logging-static-analysis/logging-the-debugger-s-other-half)) — the same event, observable either as a stop-and-inspect point or as a running record, depending on which you need. **Logging** (@section(debugger-logging-static-analysis/logging-the-debugger-s-other-half)) is the emulator-wide narrative channel every subsystem writes to regardless of whether anything is being actively debugged. **State inspection** is the REG/DATA/CODE/VAR windows (@section(debugger-logging-static-analysis/how-the-debugger-is-organized)) and on-demand dumps like `PAGING` (@section(debugger-logging-static-analysis/observation-points)) — not a hook that fires on an event at all, just a live read of whatever the guest machine's state already is. And **counters/profiling** is the quietest mechanism of all: a single global, `cycle_count` (`include/debug.h`), incremented once per interpreted instruction and displayed live in the REG window (`"cc=%-8u"`) — cheap enough to leave running in every `C_DEBUG` build, and, as @section(debugger-logging-static-analysis/why-the-dynamic-core-complicates-all-of-this) shows, not even quite exact once the dynamic core is involved.
+
+Laid out together, the differences between these mechanisms are really differences along three axes: whether you interact with them or they simply run, whether they cost anything when nothing is happening, and whether they change execution or only watch it.
+
+| Observation point | Interactive vs. continuous | Execution impact | Observes or modifies |
+|---|---|---|---|
+| Physical breakpoint (`BP`) | Interactive (stops on hit) | None until hit; the patched `0xCC` costs nothing extra to execute | Modifies guest memory (one byte), but not guest *behavior* |
+| Watchpoint (`BPMEM`/`BPPM`/`BPLM`) | Interactive (stops on change) | Continuous per-instruction poll while active; `C_HEAVY_DEBUG`-only | Observes only (except `MEMORY_FREEZE`, which modifies) |
+| Interrupt breakpoint (`BPINT`) | Interactive (stops on match) | Near-zero; checked only when an interrupt actually fires | Observes only |
+| Instruction trace (`LOG` command) | Continuous, bounded by count | Real per-instruction cost while active | Observes only |
+| Heavy trace ring buffer (`logHeavy`) | Continuous, always-on while toggled | Per-instruction write to an in-memory buffer | Observes only |
+| I/O trace (`LOG_IO`) | Continuous, self-silencing | One warning per unclaimed port, then free | Observes only |
+| Subsystem logging (`LOG(type,severity)`) | Continuous while a subsystem's level allows it | Filtered before formatting; near-zero when disabled | Observes only |
+| State inspection (REG/DATA/CODE, `PAGING`) | Interactive, on demand | Zero when not actively queried | Observes only |
+| Counters (`cycle_count`) | Continuous, always-on in `C_DEBUG` | One integer increment per instruction | Observes only |
+
+The pattern worth noticing across that whole table: almost nothing in DOSBox-X's instrumentation layer *modifies* guest behavior. A physical breakpoint changes one byte, but only well-behaved DOS software would ever read its own code as data and notice; everything else is pure observation, deliberately, because instrumentation that changes the thing it's measuring stops being trustworthy the moment it does.
+
+## 19.10 Why the Dynamic Core Complicates All of This {#why-the-dynamic-core-complicates-all-of-this}
+
+Everything in sections 17.7 and 17.8 describes a debugger built around a specific assumption: that the emulator executes one guest instruction at a time, checking in between each one. That assumption is exactly true of DOSBox-X's interpreter core, and it is not reliably true of its dynamic recompiler — the JIT this book's earlier chapter on dynamic recompilation covers in full — and the gap between those two facts is the single biggest source of debugging friction in this entire codebase. DOSBox-X doesn't hide this gap; it prints a warning about it directly to the user the moment single-stepping is attempted:
+
+```cpp
+void DEBUG_WarnDynamic(void) {
+    DEBUG_ShowMsg("Warning: Single-stepping may not work correctly with \"Dynamic core\".");
+    DEBUG_ShowMsg("         If you encounter problems, switch the CPU core to \"Normal core\".");
+}
+```
+
+The shape of the difference is easiest to see side by side, before diving into the source that produces it:
+
+```
+Interpreter (core_normal.cpp):
+
+    instruction
+        |
+    debug check
+        |
+     execute
+        |
+   (repeat, per instruction)
+```
+
+```
+Dynamic recompiler (core_dyn_x86.cpp / core_dynrec.cpp):
+
+    instructions  (a whole run of them, decoded once)
+        |
+   translated block   (compiled to native host code)
+        |
+   native execution   (no per-instruction check happens here)
+        |
+   return to emulator  (debug check happens here, and only here)
+```
+
+The interpreter's debug check sits *inside* the loop that executes instructions, one per iteration. The recompiler's debug check sits *outside* the loop that executes instructions — a whole translated block runs as one opaque unit of native code before the check gets another turn. That's the entire difference this section spends the rest of its length justifying in source-code terms.
+
+The reason is visible directly in the two cores' source. `core_normal.cpp`'s interpreter checks for a breakpoint at the very top of its per-instruction loop, before decoding a single opcode:
+
+```cpp
+#if C_DEBUG
+#if C_HEAVY_DEBUG
+    if (DEBUG_HeavyIsBreakpoint()) {
+        FillFlags();
+        return (Bits)debugCallback;
+    }
+#endif
+#endif
+    cycle_count++;
+restart_opcode:
+    switch (core.opcode_index+Fetchb()) {
+```
+
+Every single guest instruction gets this check. `core_dyn_x86.cpp`'s dynamic core checks the identical function, `DEBUG_HeavyIsBreakpoint()` — but only at the boundaries between translated blocks, never inside one:
+
+```cpp
+restart_core:
+    PhysPt ip_point=SegPhys(cs)+reg_eip;
+#if C_DEBUG
+#if C_HEAVY_DEBUG
+    if (DEBUG_HeavyIsBreakpoint()) return debugCallback;
+#endif
+#endif
+    ...
+run_block:
+    BlockReturnDynX86 ret=safe_gen_runcode((uint8_t*)cache_rwtox(block->cache.start));
+```
+
+`safe_gen_runcode()` is where the actual work happens, and it is genuinely opaque from the debugger's point of view while it's running: it's a jump into a block of *host* machine code the recompiler generated ahead of time, translating some run of guest instructions into native ones, and that host code executes to completion (or to whatever exit condition the block itself was compiled to check, typically a cycle-count exhaustion or a control-flow instruction) before control ever returns to `CPU_Core_Dyn_X86_Run()` and gives `DEBUG_HeavyIsBreakpoint()` another chance to look. A breakpoint address sitting in the middle of an already-running translated block simply cannot be caught mid-block — there is no per-instruction check inside that native code to catch it with, because per-instruction checking is exactly the overhead the recompiler exists to eliminate.
+
+This is what "dynamic recompilation complicates instrumentation" concretely means: the two cores don't just run at different speeds, they offer fundamentally different granularities of observability, and the difference isn't a bug DOSBox-X could patch away without giving up most of the recompiler's speed advantage — checking every instruction the way `core_normal.cpp` does is precisely the cost a JIT is built to avoid paying.
+
+It gets more specific still with the actual `0xCC`-patching breakpoints from @section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host), and here the resolution is a piece of emergent design worth admiring rather than a workaround. A dynamic core keeps its translated blocks cached against the assumption that the guest code they were compiled from hasn't changed since compilation — obviously true almost all the time, but never something the emulator can simply assume, because DOS software routinely modifies its own code (self-decrypting loaders, runtime patching, and plain old self-modifying code all existed). `CodePageHandler` (`src/cpu/core_dyn_x86/cache.h`) is DOSBox-X's answer: one more `PageHandler` subclass, installed over any page that currently has translated blocks cached against it, whose `writeb()` override does this on every single write:
+
+```cpp
+void writeb(PhysPt addr,uint8_t val) override {
+    ...
+    host_writeb(hostmem+addr,val);
+    if ((*(uint8_t*)&write_map[addr]) == 0) {
+        if (active_blocks) return;
+        ...
+    } else if (!invalidation_map) {
+        invalidation_map=(uint8_t*)malloc(4096);
+        memset(invalidation_map,0,4096);
+    }
+    invalidation_map[addr]++;
+    InvalidateRange(addr,addr);
+}
+```
+
+`InvalidateRange` walks every cached block overlapping that address and clears it, forcing a fresh recompile the next time execution reaches that page. This exists entirely for self-modifying-code correctness — nothing about it was written with breakpoints in mind. But `CBreakpoint::Activate()`'s `mem_writeb(location, 0xCC)` from @section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host) is, from `CodePageHandler`'s point of view, indistinguishable from any other guest code write: it triggers the exact same invalidation, and the block gets recompiled with the genuine `0xCC` byte baked into the freshly-generated native code this time. Physical breakpoints work correctly against the dynamic core not because anyone built breakpoint-awareness into the recompiler, but because the recompiler already had to treat every code-page write as a potential invalidation trigger for entirely unrelated reasons, and a breakpoint write rides along for free.
+
+The last piece is quieter but just as real: even simply *reading* register state while paused inside the dynamic core isn't automatically trustworthy, because the recompiler defers FPU state rather than keeping it synchronized every instruction the way the interpreter does. Entering the debugger explicitly flushes it first:
+
+```cpp
+void dyn_core_dh_debug_flush (void) {
+    dh_fpu_enter_normal_core();
+}
+```
+
+Without that flush, the FPU registers the debugger's REG window would show could simply be stale — correct for the host's own deferred-FPU bookkeeping, wrong for anyone trying to read them as the guest's actual x87 state at this instant. It's one more small, specific tax the dynamic core levies on instrumentation in exchange for the speed it buys everywhere else, and — like the block-boundary breakpoint granularity above it — DOSBox-X pays that tax explicitly rather than silently showing you a number that happens to be wrong.
+
+## 19.11 Logging: The Debugger's Other Half {#logging-the-debugger-s-other-half}
+
+It would be easy to assume the debugger and the emulator's ordinary logging output — the messages every device chapter in this book has quoted directly from source comments and `LOG()` calls — are two separate systems that happen to share a screen. They aren't. They're the same function, and the shape of that function is worth drawing out before looking at its pieces:
+
+```
+Subsystem event
+       |
+       v
+   LOG message        e.g. LOG(LOG_SB, LOG_WARN)("...")
+       |
+       v
+   Filtering          loggrp[type].min_severity, from dosbox-x.conf's [log] section
+       |
+       v
+    Output             DEBUG_ShowMsg() — file, stderr, and the OUT window's ring buffer
+```
+
+Every arrow in that pipeline maps directly onto real code below.
+
+```cpp
+void DEBUG_ShowMsg(char const* format,...) GCC_ATTRIBUTE(__format__(__printf__, 1, 2));
+#define LOG_MSG DEBUG_ShowMsg
+```
+
+That's the entirety of `include/logging.h`'s public contract for `LOG_MSG`: it is not a wrapper around `DEBUG_ShowMsg`, it *is* `DEBUG_ShowMsg`, textually substituted by the preprocessor. Every `LOG_MSG(...)` call anywhere in the codebase — and every call through the `LOG(LOG_SB, LOG_WARN)("...")` functor pattern this book's sound and DOS chapters have both quoted directly from `sblaster.cpp` and `dos.cpp` — ends up in the exact same function, defined inside `src/debug/debug_gui.cpp`, the debugger's own source directory. The debugger isn't a consumer of the logging system; the logging system's actual sink lives inside the debugger module, whether or not the debugger's window is currently visible.
+
+`LOG::operator()` — the functor invoked by `LOG(LOG_TYPE, SEVERITY)("format", ...)` — does one useful thing before handing off to `DEBUG_ShowMsg`: it filters by a per-subsystem severity threshold and stamps every surviving message with the current emulated cycle count.
+
+```cpp
+if (d_type>=LOG_MAX) return;
+if (d_severity < loggrp[d_type].min_severity) return;
+DEBUG_ShowMsg("%10u%s %s:%s\n",static_cast<uint32_t>(cycle_count),s_severity,loggrp[d_type].front,buf);
+```
+
+`LOG_TYPES` (`include/logging.h`) enumerates one entry per subsystem this book has covered and several it hasn't — `LOG_VGA`, `LOG_SB`, `LOG_CPU`, `LOG_PIT`, `LOG_DOSMISC`, `LOG_FILES`, `LOG_PAGING`, and more — and each gets its own independently-configurable minimum severity, exposed directly as a `dosbox-x.conf` setting via `LOG::SetupConfigSection()`:
+
+```cpp
+for (Bitu i = LOG_ALL + 1;i < LOG_MAX;i++) {
+    safe_strncpy(buf,loggrp[i].front, sizeof(buf));
+    lowcase(buf);
+    Pstring = sect->Add_string(buf,Property::Changeable::Always,"false");
+    Pstring->Set_values(log_values);   // "debug","normal","warn","error","fatal","never"
+}
+```
+
+which is how a config file ends up with lines like `sb=warn` or `cpu=debug` — a fine-grained dial per subsystem, checked before a single byte of formatting work happens, so a silent subsystem costs almost nothing at runtime. Two more flags in that same section are worth calling out specifically for reverse-engineering purposes: `int21`, which — as @chapter(the-dos-kernel)'s own `DOS_21Handler` prologue shows —
+
+```cpp
+if (log_int21) {
+    LOG(LOG_DOSMISC, LOG_DEBUG)("Executing interrupt 21, ah=%x, al=%x", reg_ah, reg_al);
+}
+```
+
+logs the AH/AL pair of every single DOS API call the guest makes, and `fileio`, which does the same for file operations specifically inside `dos_files.cpp`. Enabled together, they produce a running, timestamped record of exactly which DOS services a program actually called and in what order — not what the disassembly says it *might* call, but what it demonstrably did call, on this run, against this data.
+
+Wherever a message ends up — filtered through `LOG()` or not — `DEBUG_ShowMsg` fans it out to as many as three destinations at once: a configured log file on disk (if one's open), `stderr` (as a fallback, or always, depending on build configuration), and — only in `C_DEBUG` builds — a 4000-line in-memory ring buffer (`logBuff`, `MAX_LOG_BUFFER`) that the OUT window reads directly:
+
+```cpp
+logBuff.emplace_back(buf);
+if (logBuff.size() > MAX_LOG_BUFFER) {
+    logBuffHasDiscarded = true;
+    ...
+    logBuff.pop_front();
+}
+```
+
+The debugger's scrolling console isn't a filtered view of "debugger-relevant" events curated separately from the log file — it's a live tail of the identical stream, capped in memory purely so the ring buffer doesn't grow without bound, with the disk copy (if enabled) getting every line regardless of whether you ever open the debugger window to look at it.
+
+## 19.12 Correlating a Trace Against Ghidra {#correlating-a-trace-against-ghidra}
+
+Everything this chapter has built toward — breakpoints, disassembly, tracing, logging — becomes most useful the moment you need to compare it against something built entirely outside DOSBox-X: a static disassembly of the same DOS binary, opened cold in a tool like Ghidra, with no runtime behavior attached to it at all. Making that comparison work reliably comes down to one translation, applied consistently.
+
+A `LogInstruction()` trace line — from either the `LOG` command's `LOGCPU.TXT` or `E_Exit()`'s automatic `LOGCPU_INT_CD.TXT` — identifies an address as a segment:offset pair, `CS:EIP`, because that's genuinely how the real-mode CPU addresses memory and it's what DOSBox-X's own disassembler and register windows all report. Ghidra, loading a raw `.COM` or `.EXE` file with a DOS/MZ loader, shows addresses as flat file offsets (or as offsets from whatever base its loader assumed) — a different coordinate system entirely, and the two won't visually match without doing the same arithmetic @chapter(the-dos-kernel)'s `DOS_Execute` already does at load time.
+
+For a `.COM` file, that arithmetic is close to trivial: @chapter(the-dos-kernel) showed the entry point is always `pspseg:0x100`, meaning the program's own code begins exactly 256 bytes into its segment. A trace line showing `CS:EIP = 1234:0150` against a `.COM` file is address `0x150 - 0x100 = 0x50` into the raw file Ghidra loaded — a fixed, constant offset for the entire run, because a `.COM` program never relocates.
+
+For a `.EXE` file it takes one more step, because the load segment isn't fixed and the header's own relocation table has already been applied by the time the program runs. @chapter(the-dos-kernel) traced this exactly: entry `CS:IP` is computed as `loadseg+head.initCS : head.initIP`, where `loadseg` is whatever paragraph DOSBox-X's allocator happened to place the program's PSP at on this particular run — which, notably, is not guaranteed to be the same segment on every run, or the same segment a different DOS version's own loader would have chosen. A trace address's *offset* from the program's own load segment is what corresponds to a stable, reproducible position in the file Ghidra has open; the segment value itself is a detail of this particular execution, not a property of the binary.
+
+The other half of correlating a trace with static analysis is simpler and comes straight from @section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host): `BPINT` filtering. Set `BPINT 21 AH=3D` and single-step from there, and you have a live, DOS-version-accurate record of exactly what happens on the other side of every `INT 21h` a disassembler shows you at a given call site — what handle number came back in `AX`, what the carry flag ended up being, which of @chapter(the-dos-kernel)'s `DOS_Drive` implementations actually answered the call. A disassembly can tell you a program calls `INT 21h`; it can't tell you what DOS actually did in response, on this exact file, on this exact run, the way a breakpoint filtered down to one specific function number and stepped through can.
+
+## 19.13 What Carries Forward {#what-carries-forward}
+
+The theme underneath this entire chapter is the same one underneath every device chapter before it, turned inward on the emulator itself: fidelity has a cost, and DOSBox-X is unusually honest about paying it and telling you when it can't. A physical breakpoint really does patch guest memory with a real `0xCC`, the same technique a native debugger uses against a real process. A disassembler with a three-project lineage really does produce the text every trace file and every CODE window shares. And the dynamic recompiler — the fastest way to run a DOS program in this emulator — really does cost you per-instruction observability to get that speed, which is not a flaw DOSBox-X is hiding but a tradeoff it prints a warning about the moment you're about to feel it.
+
+That honesty is exactly what makes this chapter's tools worth trusting for reverse-engineering work specifically. A trace file's timestamps, register dumps, and disassembly text aren't approximations of what a real DOS machine would have shown you — for everything except the dynamic core's mid-block blind spot, they're the actual state, at the actual moment, of a machine built to reproduce real DOS behavior exactly. Knowing where that one blind spot is, and why it exists, is what turns "the debugger showed me something" into "I know precisely how much to trust what the debugger showed me" — which, for anyone using this chapter's tools to reconstruct what a DOS-era binary actually does, is the more valuable thing to walk away with.

@@ -1,0 +1,90 @@
+---
+interface Props {
+  title?: string;
+  content?: string;
+}
+
+const { title, content: contentProp } = Astro.props;
+
+let diagramContent = contentProp;
+if (!diagramContent) {
+  diagramContent = await Astro.slots.render('default');
+}
+---
+
+<figure class="arch-diagram">
+  {title && <figcaption>{title}</figcaption>}
+  <div class="mermaid">
+    {diagramContent}
+  </div>
+</figure>
+
+<script>
+  import mermaid from 'mermaid';
+
+  mermaid.initialize({
+    theme: 'base',
+    themeVariables: {
+      primaryColor: 'var(--color-accent)',
+      primaryTextColor: 'var(--color-text)',
+      primaryBorderColor: 'var(--color-line-strong)',
+      lineColor: 'var(--color-line-strong)',
+      secondaryColor: 'var(--color-soft)',
+      tertiaryColor: 'var(--color-surface)',
+      background: 'transparent',
+      fontFamily: 'var(--font-body)',
+    },
+    flowchart: { useMaxWidth: true, htmlLabels: true },
+    sequence: { useMaxWidth: true },
+  });
+
+  document.querySelectorAll('.mermaid').forEach((el) => {
+    const source = el.textContent?.trim();
+    if (source) {
+      try {
+        const id = 'mermaid-' + Math.random().toString(36).slice(2);
+        mermaid.render(id, source).then((result) => {
+          el.innerHTML = result.svg;
+        });
+      } catch (e) {
+        console.warn('Mermaid render error:', e);
+      }
+    }
+  });
+</script>
+
+<style>
+  .arch-diagram {
+    margin: calc(var(--baseline) * 1.5) 0;
+    padding: var(--baseline);
+    border: var(--hairline);
+    background: var(--color-surface);
+    overflow-x: auto;
+  }
+
+  .arch-diagram figcaption {
+    margin-bottom: 0.75rem;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .mermaid {
+    display: flex;
+    justify-content: center;
+    min-height: 80px;
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--color-muted);
+  }
+
+  .mermaid svg {
+    max-width: 100%;
+    height: auto;
+  }
+</style>

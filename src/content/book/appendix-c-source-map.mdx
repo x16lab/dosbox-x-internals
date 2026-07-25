@@ -1,0 +1,78 @@
+---
+title: "Appendix C — Annotated Source Map"
+description: "A cross-reference from source file to subsystem to the chapter(s) that explain it, and back — built incrementally alongside the chapters."
+order: 20
+chapterSlug: "appendix-c-source-map"
+part: "appendices"
+---
+# Appendix C — Annotated Source Map {#appendix-c-annotated-source-map}
+
+*A cross-reference from source file to subsystem to the chapter(s) that explain it, and back. Useful in both directions: if you're reading a chapter and want to open the file it's discussing, or if you're browsing the DOSBox-X source tree and want to know whether — and where — this book covers a file you've found. Built incrementally alongside the chapters; every entry below is a file actually cited in the book so far.*
+
+*(Source references are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File locations may drift as the project moves.)*
+
+---
+
+## By Source File {#by-source-file}
+
+| File | Subsystem | Covered in |
+|---|---|---|
+| `src/dosbox.cpp` | Emulator startup, main scheduling loop (`DOSBOX_RunMachine`, `Normal_Loop`), `[cpu]`/`[dosbox]` config registration | @section(dosbox-x-architecture/configuration-as-its-own-layer); @section(main-loop-and-event-scheduler/from-main-to-normal-loop)–@section(main-loop-and-event-scheduler/normal-loop) |
+| `src/gui/sdlmain.cpp` | Program entry point (`main()`), SDL frontend, window/input/audio/video handling, `[sdl]` config registration | @section(dosbox-x-architecture/why-start-here) (brief); @section(main-loop-and-event-scheduler/from-main-to-normal-loop); @section(host-abstraction-sdl/backend-and-frontend-what-the-split-actually-means-here) and @section(host-abstraction-sdl/a-full-frame-from-gfx-startupdate-to-the-screen) |
+| `src/gui/render.cpp` | Frame scaling and pixel-format conversion, sitting between backend VGA output and the SDL frontend | @section(host-abstraction-sdl/backend-and-frontend-what-the-split-actually-means-here) |
+| `src/hardware/iohandler.cpp` | Flat I/O port dispatch table (`io_writehandlers`), `IN`/`OUT` routing | @section(dosbox-x-architecture/how-modules-talk-to-each-other) |
+| `src/hardware/pic.cpp` | 8259 PIC emulation (`PIC_Controller`), the global event queue (`PIC_AddEvent`, `PIC_RunQueue`), hardware interrupt dispatch (`PIC_runIRQs`) | @section(main-loop-and-event-scheduler/pic-runqueue)–@section(main-loop-and-event-scheduler/completing-a-millisecond); @section(interrupts-exceptions-pic/life-of-a-timer-tick)–@section(interrupts-exceptions-pic/software-interrupts-the-guest-interrupts-itself) |
+| `src/hardware/timer.cpp` | 8253 PIT emulation, system timer tick generation | @section(main-loop-and-event-scheduler/completing-a-millisecond) |
+| `src/misc/setup.cpp` | Configuration system (`Config`, `Section_prop`, property registration) | @section(dosbox-x-architecture/configuration-as-its-own-layer) |
+| `include/callback.h` | Callback mechanism bridging guest execution and native C++ handler functions | @section(dosbox-x-architecture/how-modules-talk-to-each-other); @section(main-loop-and-event-scheduler/normal-loop) |
+| `include/paging.h` | `PageHandler` class, the TLB (`paging.tlb`), `mem_readb_inline`/`mem_writeb_inline` | @section(memory-model-and-address-translation/the-tlb-making-the-common-case-fast)–@section(memory-model-and-address-translation/from-address-translation-to-memory-mapping) |
+| `include/regs.h` | Segment register state (`Segs.phys[]`), `SegPhys()`/`SegValue()` | @section(memory-model-and-address-translation/segment-registers-in-dosbox-x-segs-phys) |
+| `src/ints/ems.cpp` | EMS (Expanded Memory Specification) implementation — `INT67_Handler()`, `EMM_PAGEFRAME` | @section(memory-model-and-address-translation/beyond-conventional-memory-ems-xms-and-umbs) |
+| `src/ints/xms.cpp` | XMS (Extended Memory Specification) implementation — `INT 2Fh` installed-check/entry-point handling (cases `0x4300`/`0x4310`) | @section(memory-model-and-address-translation/beyond-conventional-memory-ems-xms-and-umbs) |
+| `src/cpu/core_normal.cpp` | The interpreter CPU core (`CPU_Core_Normal_Run`), fetch/decode/execute loop, opcode dispatch | @chapter(interpreter-core), entire chapter |
+| `src/cpu/modrm.cpp`, `src/cpu/modrm.h` | ModRM byte decoding, register/effective-address lookup tables (`lookupRMregb` and siblings) | @section(interpreter-core/operands-the-modrm-byte-and-the-ea-table)–@section(interpreter-core/flags-computed-only-when-someone-asks) |
+| `src/cpu/core_dynrec.cpp` | The portable dynamic recompiler core (`CPU_Core_Dynrec_Run`), host backend selection (`C_TARGETCPU`) | @section(dynamic-recompilation/same-contract-different-machinery), @section(dynamic-recompilation/what-emitting-code-actually-means) |
+| `src/cpu/core_dyn_x86.cpp`, `src/cpu/core_dyn_x86/` | DOSBox-X's original, x86-host-only dynamic core (`CPU_Core_Dyn_X86_Run`) — persistent register allocator (`DynReg`/`FindDynReg`), page-fault-tolerant block translation | @section(dynamic-recompilation/two-implementations-one-idea), @section(dynamic-recompilation/where-core-dyn-x86-diverges-a-register-allocator-not-just-a-code-generator)–@section(dynamic-recompilation/where-core-dyn-x86-diverges-page-faults-that-don-t-end-the-block) |
+| `src/cpu/core_dynrec/decoder.h` | Guest instruction decoding and translation-to-host-code dispatch (`CreateCacheBlock`) | @section(dynamic-recompilation/translation-units-cache-blocks)–@section(dynamic-recompilation/what-emitting-code-actually-means) |
+| `src/cpu/core_dynrec/risc_x64.h` | x86-64 host code-generation backend (one of several `risc_*.h` backends) | @section(dynamic-recompilation/what-emitting-code-actually-means) |
+| `include/cpu.h` | `CPU_HW_Interrupt`/`CPU_SW_Interrupt` wrappers | @section(interrupts-exceptions-pic/the-hardware-answer-the-8259-pic) |
+| `src/cpu/cpu.cpp` | `CPU_Interrupt()`, `CPU_Exception()` — the shared interrupt/exception dispatch mechanism | @section(interrupts-exceptions-pic/the-hardware-answer-the-8259-pic), @section(interrupts-exceptions-pic/the-shared-destination-cpu-interrupt) |
+| `src/hardware/vga_crtc.cpp` | CRTC register block — raster timing, index/data port pair `0x3D4`/`0x3D5` | @section(vga-emulation/the-source-tree-as-a-map)–@section(vga-emulation/the-common-pattern-index-data-register-pairs) |
+| `src/hardware/vga_seq.cpp` | Sequencer register block — index/data port pair `0x3C4`/`0x3C5` | @section(vga-emulation/the-source-tree-as-a-map), @section(vga-emulation/write-modes-and-latch-implementation) |
+| `src/hardware/vga_gfx.cpp` | Graphics Controller register block — index/data port pair `0x3CE`/`0x3CF` | @section(vga-emulation/the-source-tree-as-a-map) |
+| `src/hardware/vga_attr.cpp` | Attribute Controller — single-port index/data toggle (`0x3C0`) | @section(vga-emulation/from-port-writes-to-dosbox-x-handlers) |
+| `src/hardware/vga_memory.cpp` | VGA framebuffer `PageHandler` family, write modes, latch register (`ModeOperation`) | @section(vga-emulation/hardware-blocks-what-each-sub-chip-does), @section(vga-emulation/the-framebuffer-a-family-of-pagehandler-s) |
+| `src/hardware/vga_draw.cpp` | Scanline rendering, retrace timing (`VGA_SetupDrawing`) | @section(vga-emulation/int-10h-a-program-not-a-privilege) |
+| `src/hardware/vga_misc.cpp` | Status register (`0x3DA`) — blanking/retrace bit computation | @section(vga-emulation/from-port-writes-to-dosbox-x-handlers), @section(vga-emulation/int-10h-a-program-not-a-privilege) |
+| `src/ints/int10_modes.cpp` | `INT10_SetVideoMode()` — BIOS video mode-set, issuing the same register writes guest code would | @section(vga-emulation/write-modes-and-latch-implementation) |
+| `src/hardware/dma.cpp`, `include/dma.h` | 8237 DMA controller — `DmaChannel`, `Register_Callback()`, physical-memory block transfers | @section(dma-and-pit/the-8237-taking-turns-on-the-bus)–@section(dma-and-pit/how-a-device-actually-uses-a-channel) |
+| `src/hardware/pcspeaker.cpp` | PC speaker sample generation, driven by PIT channel 2 (channel 1 on PC-98) | @section(dma-and-pit/the-forgotten-half-of-the-timer)–@section(dma-and-pit/more-than-a-beeper) |
+| `src/hardware/sblaster.cpp` | Sound Blaster DSP command dispatch (`DSP_DoCommand`), DMA-driven playback, `sbtype=` hardware-generation lineage | @section(sound/the-compatibility-that-won-the-dos-wars)–@section(sound/the-dsp-commands-not-a-direct-line-to-audio) |
+| `src/hardware/adlib.cpp` | OPL FM synthesis chip, `OPL_Write()`, ports offset from the Sound Blaster's own base address | @section(sound/fm-synthesis-a-second-chip-sharing-the-same-card) |
+| `src/hardware/gus.cpp` | Gravis UltraSound — 32-voice wavetable synthesis, fixed-point interpolation, onboard `GUSRam` loaded via DMA | @section(sound/the-gravis-ultrasound-wavetable-synthesis-and-its-own-onboard-memory) |
+| `include/midi.h` | `MidiHandler` base class — the shared interface behind both host passthrough and software synthesis backends | @section(sound/midi-one-interface-several-genuinely-different-destinations) |
+| `src/gui/midi_alsa.h`, `midi_oss.h`, `midi_win32.h`, `midi_coremidi.h` | Host MIDI passthrough backends (Linux/BSD/Windows/macOS) | @section(sound/midi-one-interface-several-genuinely-different-destinations) |
+| `src/gui/midi_mt32.h`, `midi_synth.h` | Software MIDI synthesis backends — MT-32 hardware emulation, general soundfont-driven synthesis (FluidSynth) | @section(sound/midi-one-interface-several-genuinely-different-destinations) |
+| `src/output/output_surface.cpp` | Software-only (`SCREEN_SURFACE`) presentation backend implementation | @section(host-abstraction-sdl/a-full-frame-from-gfx-startupdate-to-the-screen) |
+| `src/hardware/keyboard.cpp` | Emulated keyboard controller, `KEYBOARD_AddKey()` and scancode-set-specific translation; also owns port `0x61` (PIT channel 2 gate / speaker enable) | @section(host-abstraction-sdl/input-keyboard-mouse-and-joystick-three-different-shapes); @section(dma-and-pit/gating-the-speaker-port-0x61-and-a-file-organization-lesson) |
+| `src/gui/sdl_mapper.cpp` | Input-remapping ("mapper") subsystem, including joystick handling | @section(host-abstraction-sdl/input-keyboard-mouse-and-joystick-three-different-shapes) |
+| `src/hardware/mixer.cpp` | Audio mixing and the SDL audio callback handoff (`MIXER_CallBack`) | @section(host-abstraction-sdl/audio-a-pull-based-handoff-and-dosbox-x-s-first-thread-boundary) |
+
+## By Subsystem {#by-subsystem}
+
+- **Scheduler / event queue** — `src/dosbox.cpp`, `src/hardware/pic.cpp`, `src/hardware/timer.cpp` → @chapter(main-loop-and-event-scheduler)
+- **Memory model** — `include/paging.h`, `include/regs.h`, `src/ints/ems.cpp`, `src/ints/xms.cpp` → @chapter(memory-model-and-address-translation)
+- **CPU cores** — `src/cpu/core_normal.cpp` (interpreter) → @chapter(interpreter-core); `src/cpu/core_dynrec.cpp` and `src/cpu/core_dynrec/*.h` (dynamic recompiler), `src/cpu/core_dyn_x86.cpp` and `src/cpu/core_dyn_x86/*.h` (original x86-only dynamic core) → @chapter(dynamic-recompilation)
+- **Interrupts and exceptions** — `include/cpu.h`, `src/cpu/cpu.cpp`, `src/hardware/pic.cpp` → @chapter(interrupts-exceptions-pic)
+- **VGA/SVGA** — `src/hardware/vga_crtc.cpp`, `vga_seq.cpp`, `vga_gfx.cpp`, `vga_attr.cpp`, `vga_memory.cpp`, `vga_draw.cpp`, `vga_misc.cpp`, `src/ints/int10_modes.cpp` → @chapter(vga-emulation)
+- **DMA and PIT (beyond the system timer)** — `src/hardware/dma.cpp`, `src/hardware/pcspeaker.cpp`, port `0x61` handling in `src/hardware/keyboard.cpp` → @chapter(dma-and-pit)
+- **Sound** — `src/hardware/sblaster.cpp`, `src/hardware/adlib.cpp`, `src/hardware/gus.cpp`, `include/midi.h`, `src/gui/midi_*.h` → @chapter(sound)
+- **Configuration** — `src/misc/setup.cpp` → @section(dosbox-x-architecture/configuration-as-its-own-layer)
+- **Frontend / host integration** — `src/gui/sdlmain.cpp`, `src/gui/render.cpp`, `src/output/output_surface.cpp` (and sibling `output_*.cpp` backends) → @section(dosbox-x-architecture/why-start-here) (brief); @chapter(host-abstraction-sdl) (full treatment)
+- **Input** — `src/hardware/keyboard.cpp`, `src/gui/sdl_mapper.cpp` → @section(host-abstraction-sdl/input-keyboard-mouse-and-joystick-three-different-shapes)
+- **Audio handoff** — `src/hardware/mixer.cpp` → @section(host-abstraction-sdl/audio-a-pull-based-handoff-and-dosbox-x-s-first-thread-boundary)
+- **Cross-module communication** — `src/hardware/iohandler.cpp`, `include/callback.h` → @section(dosbox-x-architecture/how-modules-talk-to-each-other)
+
+---
+
+*This map will expand substantially once Part III (Devices) adds `src/hardware/vga.cpp`, `dma.cpp`, and the sound subsystem's source files, and once Part IV (Software Layers) adds the DOS kernel and BIOS source under `src/dos/` and `src/ints/`.*

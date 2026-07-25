@@ -1,0 +1,456 @@
+---
+title: "Dynamic Recompilation"
+description: "The interpreter's limit, the general idea of dynamic recompilation, and DOSBox-X's two answers to it with different architectural trade-offs: dynrec (portable, multi-host-architecture) and core_dyn_x86 (x86/x64-host-specific, predating dynrec). Follows a guest instruction through dynrec's translation and execution, then traces where core_dyn_x86 diverges — a persistent register allocator, page-fault-tolerant block translation — before showing where the two cores converge again: nearly identical block-management and cache-invalidation machinery underneath both."
+order: 7
+chapterSlug: "dynamic-recompilation"
+part: "the-cpu"
+---
+
+import Diagram from '../../components/Diagram.astro';
+
+# Chapter 7 — Dynamic Recompilation {#chapter-7-dynamic-recompilation}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+In 1981, an IBM PC executing an instruction had no distinction between "guest" and "host"; the CPU simply fetched bytes and executed them. Emulation changes that relationship completely. In an interpreter, every guest instruction becomes data first: fetched from emulated memory, decoded by the emulator, interpreted by emulator code, and only then reflected in changes to the emulated machine. Dynamic recompilation changes that relationship: the decoded instruction can become persistent host machine code instead of being interpreted again on the next execution. That design is wonderfully simple and extraordinarily expensive — and this chapter is about what DOSBox-X does once "expensive" stops being good enough.
+
+## 7.1 The Problem With a Perfectly Good Interpreter {#the-problem-with-a-perfectly-good-interpreter}
+
+@chapter(interpreter-core) closed on a specific complaint about `CPU_Core_Normal_Run()`: it re-fetches, re-decodes, and re-dispatches every instruction, every time it runs — even instructions inside a loop that executes unchanged a thousand times over. Nothing about that interpreter is done wastefully; the `switch`-as-jump-table trick, the ModRM effective-address tables, the lazy flags — all of it is about minimizing the cost of decoding and executing *one* instruction. But "minimize the cost of one instruction" and "avoid paying that cost more than once for the same instruction" are different problems, and the interpreter only solves the first one. A loop that executes one million times can incur one million decodes, no matter how cheap any single decode is made.
+
+Dynamic recompilation begins with a simple question: what if the decoding cost were paid only once? Everything from here to the end of this chapter is DOSBox-X's answer — or rather, DOSBox-X's *two* answers, since, as the next section covers, this codebase settled that question twice.
+
+<Diagram src="06-1-interpreter-vs-dynrec-comparison.svg" />
+
+The diagram above frames the whole chapter in one picture: on top, `core_normal` re-pays the same `Fetchb()`-and-decode cost on every pass around a guest loop, with nothing carried between passes; below, `dynrec` pays that cost exactly once, in a one-time `CreateCacheBlock()` translation, and every later pass jumps straight into cached native code. The rest of this chapter is, section by section, the machinery that makes the bottom half true — and then, starting at @section(dynamic-recompilation/where-core-dyn-x86-diverges-a-register-allocator-not-just-a-code-generator), the machinery of the second core that answered the same question with different tradeoffs.
+
+## 7.2 The Birth of Dynamic Recompilation, Outside DOSBox-X {#the-birth-of-dynamic-recompilation-outside-dosbox-x}
+
+Before opening any DOSBox-X source, it's worth being clear that "translate once (for the lifetime of the translation), run many times" isn't an idea DOSBox-X invented, or even one that originated in emulator design. Dynamic (or "just-in-time") translation is a general strategy that predates this codebase: translate a region of executable code into another representation, retain that translation, and reuse it until the assumptions it was built on cease to hold. Binary translators running one architecture's code on another physical CPU — including projects translating x86 to run on entirely different hosts, a problem structurally identical to running 16-bit DOS-era x86 on whatever machine DOSBox-X itself is compiled for — worked out the core tradeoffs this chapter returns to repeatedly: translate a block at a time rather than one instruction, cache rather than discard, and accept that some guest behavior (self-modifying code chief among it) needs special-case handling a pure interpreter never considers. None of that is DOSBox-X's invention. What is specific to this codebase — and what earns it a chapter — is *how* DOSBox-X answered those shared tradeoffs, and that it answered them more than once.
+
+## 7.3 Two Implementations, One Idea {#two-implementations-one-idea}
+
+DOSBox-X ships two dynamic cores, and neither one is a stripped-down or legacy version of the other — they're two implementations of the same general idea with different architectural trade-offs, built at different times against different constraints, and both still selectable today.
+
+`core_dyn_x86.cpp` and `src/cpu/core_dyn_x86/` implement `CPU_Core_Dyn_X86_Run()` — DOSBox-X's *original* dynamic core, predating the second one, still selectable via `core=dynamic_x86`, and in fact the one `core=dynamic` prefers when both are compiled in. It was built with one target in mind: whatever host architecture DOSBox itself was compiled for at the time, which in practice meant the x86/x86-64 family of hosts specifically — this is the sense in which `core_dyn_x86` is best described as x86-family-host-specific rather than merely "x86." Nothing about its design had to keep guest-side and host-side concerns cleanly separated, because there was only ever one host family to think about.
+
+`core_dynrec.cpp` and `src/cpu/core_dynrec/` implement `CPU_Core_Dynrec_Run()` — this book calls it `dynrec` throughout, and it's the newer of the two. It was built to solve a problem `core_dyn_x86`'s design couldn't cheaply answer: running efficiently on host architectures beyond x86. Its `src/cpu/core_dynrec/` directory ships backend headers for x86, x86-64, ARMv4/Thumb, and ARMv8, all driven by the same host-agnostic decoder — which meant drawing a hard line, from the very first design decision onward, between "what does this guest instruction mean" and "how do I express that on this particular host CPU," a separation `core_dyn_x86` never had to make and, as @section(dynamic-recompilation/where-core-dyn-x86-diverges-a-register-allocator-not-just-a-code-generator)–@section(dynamic-recompilation/where-core-dyn-x86-diverges-page-faults-that-don-t-end-the-block) will show, doesn't make.
+
+That difference — one core free to let guest and host concerns blur together, one core built specifically to keep them apart — is the thread this whole chapter follows. @section(dynamic-recompilation/same-contract-different-machinery) through @section(dynamic-recompilation/self-modifying-code-the-fast-path-s-achilles-heel) trace `dynrec`'s side of that line in detail, because its stricter separation is what makes its internals legible as a sequence of individually-motivated design choices rather than one another. @section(dynamic-recompilation/where-core-dyn-x86-diverges-a-register-allocator-not-just-a-code-generator) and @section(dynamic-recompilation/where-core-dyn-x86-diverges-page-faults-that-don-t-end-the-block) then double back to `core_dyn_x86` and show exactly what its looser constraint buys it — and costs it. @section(dynamic-recompilation/where-they-converge-what-didn-t-need-reinventing) closes the gap between the two, showing that for all their differences in code generation and paging behavior, their block-management machinery is close enough to identical to have obviously come from the same design lineage.
+
+To make the comparison concrete before the evidence, here is the shape of the two cores side by side:
+
+| Concern | `dynrec` | `core_dyn_x86` |
+| --- | --- | --- |
+| Guest decoder | shared portable decoder | x86-specific implementation |
+| Host code generation | separate swappable backend | x86/x64-specific |
+| Host register allocation | fixed temporary interface | persistent guest-register allocation |
+| Paging | normally falls back to normal core | optional page-fault-aware translation |
+| Block cache | yes | yes |
+| Block linking | yes | yes |
+| SMC invalidation | yes | yes |
+| Fallback interpreter | yes | yes |
+
+The rest of this chapter is, section by section, the evidence for these rows — and @section(dynamic-recompilation/where-they-converge-what-didn-t-need-reinventing) returns to why their block-management machinery is so recognisably alike.
+
+## 7.4 Same Contract, Different Machinery {#same-contract-different-machinery}
+
+Before looking at anything new, it's worth confirming that `dynrec` still participates in the same execution-budget contract the previous chapters established. It does not, however, reproduce the interpreter's timing behaviour instruction-for-instruction, and keeping three ideas distinct matters more than any single sentence in this chapter:
+
+```text
+same scheduler contract
+        ≠
+same internal execution mechanism
+        ≠
+identical timing behaviour
+```
+
+The first of those — honouring the scheduler's budget and returning control when it is exhausted — is exactly what the earlier chapters meant by "execution budget is permission, not obligation" (@chapter(interpreter-core)). The other two are where the dynamic core diverges, and where this chapter will keep returning.
+
+`CPU_Core_Dynrec_Run()` opens with the identical cycle-budget guard as the interpreter:
+
+```cpp
+Bits CPU_Core_Dynrec_Run(void) {
+    if (CPU_Cycles <= 0)
+        return CBRET_NONE;
+    ...
+```
+
+And it contains an explicit, code-commented admission that it does *not* try to reproduce every corner of @chapter(memory-model-and-address-translation)'s memory model:
+
+```cpp
+/* Dynamic core is NOT compatible with the way page faults
+ * in the guest are handled in this emulator. Do not use
+ * dynamic core if paging is enabled. Do not comment this
+ * out, even if it happens to work for a minute, a half
+ * hour, a day, because it will turn around and cause
+ * Windows 95 to crash when you've become most comfortable
+ * with the idea that it works. ... */
+if (paging.enabled && !use_dynamic_core_with_paging) {
+    return CPU_Core_Normal_Run();
+}
+```
+
+That comment is worth sitting with for a moment, because it tells you something important about how these cores actually coexist: they are not required to be interchangeable in every situation, only equivalent in the situations each one claims to handle. When guest paging is switched on — the scenario Windows 95 and later rely on constantly — `dynrec` simply declines and falls back to the interpreter from @chapter(interpreter-core), silently and per-call. The dynamic core's speed advantage is real, but it's conditional, and DOSBox-X's own maintainers evidently learned the hard way that pretending otherwise causes exactly the kind of intermittent, hard-to-reproduce failure that a "it worked in testing" bug report describes. It's also worth flagging now, ahead of @section(dynamic-recompilation/where-core-dyn-x86-diverges-page-faults-that-don-t-end-the-block): this is precisely the constraint `core_dyn_x86` answers differently, rather than by refusing outright.
+
+## 7.5 Translation Units: Cache Blocks {#translation-units-cache-blocks}
+
+Where the interpreter operates one instruction at a time, `dynrec` operates on a **cache block** — a run of guest instructions, translated together, up to a cap (`CreateCacheBlock(codepage, start, 32)` — the same "32" you might notice echoing the interpreter's own conceptual unit of work, though for different reasons: here it's a translation-batch limit, not a cycle count). At this commit `dynrec` requests up to 32 guest instructions per cache block — a DOSBox-X implementation choice, not an intrinsic property of dynamic recompilation. `core_dyn_x86` makes the same limit configurable through `dynamic_core_cache_block_size`, whose default is also 32 (and which may range from 1 to 65536), as @section(dynamic-recompilation/where-core-dyn-x86-diverges-page-faults-that-don-t-end-the-block) will show when it retries a too-large block at smaller sizes. A cache block is represented by `CacheBlockDynRec`, which records where in guest memory it came from, where in the host code cache its compiled form lives, and how it links to other blocks:
+
+```cpp
+class CacheBlockDynRec {
+public:
+    struct {
+        uint16_t start, end;             // where in the page is the original code
+        CodePageHandlerDynRec * handler; // page containing this code
+    } page;
+    struct {
+        uint8_t * start;      // where in the cache are we
+        uint8_t * xstart;     // executable mapping of the same location
+        Bitu size;
+        CacheBlockDynRec * next;
+    } cache;
+    struct {
+        Bitu index;
+        CacheBlockDynRec * next;
+    } hash;
+    // ...
+};
+```
+
+The translation itself happens in `CreateCacheBlock()` (`src/cpu/core_dynrec/decoder.h`), and its outer structure will look immediately familiar — it's the same `switch`-on-fetched-opcode-byte shape as @chapter(interpreter-core)'s interpreter:
+
+```cpp
+while (max_opcodes--) {
+    ...
+    Bitu opcode = decode_fetchb();
+    switch (opcode) {
+    case 0x00: dyn_dop_ebgb(DOP_ADD); break;
+    case 0x08: dyn_dop_ebgb(DOP_OR);  break;
+    case 0x10: dyn_dop_ebgb(DOP_ADC); break;
+    // ...
+    }
+}
+```
+
+The crucial difference is what each case *does*. In the interpreter, `RMEbGb(ADDB)` performed the addition immediately, on real guest register/memory state. Here, `dyn_dop_ebgb(DOP_ADD)` performs no addition at all — it emits instructions into the host code cache that will perform the addition *later*, whenever this block eventually runs. Decoding and code generation happen once, at translation time; execution happens an arbitrary number of times afterward, as native host instructions, without re-entering the guest decoder for each instruction, without the decoder ever running again for those bytes.
+
+## 7.6 What "Emitting Code" Actually Means {#what-emitting-code-actually-means}
+
+Before looking at an actual code-generation function, it's worth heading off a confusion the last section sets up without resolving: if `dynrec` exists to run 16-bit DOS-era x86 code faster, why would any of its internals be talking about x86-64 at all — isn't that a different instruction set entirely?
+
+It is, and the chapter is about to show you two of them side by side, which is exactly where this gets confusing if the distinction isn't stated plainly. `dynrec` deals with two entirely separate instruction sets, and it's worth being explicit about which one each part of this chapter has been describing:
+
+- The **guest** instruction set — the thing being emulated — is DOS-era x86, almost always running in 16-bit real mode. @section(dynamic-recompilation/translation-units-cache-blocks)'s `switch (opcode)` in `decoder.h` decodes exactly this: `decode_fetchb()` reads guest bytes through `mem_readb()`, the same memory subsystem @chapter(memory-model-and-address-translation) covers, and the opcode values it switches on (`0x00` for `ADD Eb,Gb`, and so on) are the classic x86 encoding that's been stable since the 8086. That's the guest x86 side of the emulator — the software DOSBox-X is actually trying to run. The common DOS case is 16-bit real-mode execution, but the dynamic core also has to translate 32-bit protected-mode code (Windows 95, paging) when guest software needs it.
+- The **host** instruction set is whatever CPU DOSBox-X itself happens to be compiled for and running on — and for an x86-64 host, that's an ordinary 64-bit x86-64 PC. `risc_x64.h` isn't a guest-facing file at all; it's selected at compile time based on the *build target*, not anything about the emulated machine:
+
+```cpp
+#if C_TARGETCPU == X86_64
+#include "core_dynrec/risc_x64.h"
+#elif C_TARGETCPU == X86
+#include "core_dynrec/risc_x86.h"
+#elif C_TARGETCPU == MIPSEL
+#include "core_dynrec/risc_mipsel32.h"
+// ...ARMV4LE / ARMV8LE follow the same pattern
+#endif
+```
+
+So when this section shows you a `risc_x64.h` function, it's showing you what happens *only* when DOSBox-X has been built for a 64-bit x86 host — the code it generates runs directly on your actual, physical CPU, and has nothing to do with the 16-bit guest instructions that triggered its generation. Build the same emulator for an ARM host instead, and every example in this section would emit completely different bytes from a completely different backend file, translating the exact same guest instructions.
+
+One more thing worth naming directly, since it's the detail most likely to make this feel like a contradiction rather than a clarification: the host example below happens to use opcode bytes (`0xB8`–`0xBF` for `MOV r32, imm32`) that look almost identical to plain 32-bit x86 encoding — and that's not a coincidence you need to explain away. x86-64 genuinely is a superset of 32-bit x86; its long mode kept the legacy encoding for 32-bit register operations largely intact. So the resemblance between "guest x86 opcode" and "host x86-64 opcode" in this chapter isn't the chapter mixing the two up — it's two different instruction sets that, on an x86-64 host, happen to descend from x86 closely enough to look alike on the page. On an ARM or MIPS host, the generated bytes would look entirely different, which is exactly the point: the guest decoding in @section(dynamic-recompilation/translation-units-cache-blocks) never changes no matter what the host is, and the code-generation examples below would look totally different if the host did.
+
+With that distinction in view, here's what code generation for an x86-64 host actually looks like. It's easy to let "code generation" stay abstract. It shouldn't — at the bottom of the abstraction, it's just writing bytes into a buffer. Here's `gen_mov_dword_to_reg_imm`, from the x86-64 host backend (`src/cpu/core_dynrec/risc_x64.h`):
+
+```cpp
+// move a 32bit constant value into dest_reg
+static void gen_mov_dword_to_reg_imm(HostReg dest_reg, uint32_t imm) {
+    cache_addb(0xb8 + dest_reg);   // mov reg,imm
+    cache_addd(imm);
+}
+```
+
+`0xb8 + dest_reg` is the literal x86-64 opcode encoding for `MOV r32, imm32` (opcodes `0xB8`–`0xBF`, one per register) — again, this is a host instruction being written into the code cache, not a guest one being interpreted. `cache_addb`/`cache_addd` append raw bytes to the code cache buffer. At the lowest level, code generation here really is writing machine-code bytes into the code cache. The `gen_*` routines are a small hand-written backend: they encode host instructions directly rather than asking a conventional compiler to compile the guest instruction at runtime. Every `gen_*` function in a `risc_*.h` backend file does the same kind of thing for one small unit of work — move a value, add two registers, compare and branch — and every guest instruction's `dyn_*` handler (in `decoder_opcodes.h`) is built by composing several of these `gen_*` calls in sequence.
+
+This is also exactly where the multi-host-architecture design pays for itself. `decoder.h`'s `dyn_dop_ebgb(DOP_ADD)` is host-independent at the semantic level: it requests the host operations needed to implement a guest 8-bit `ADD` with this addressing form. The actual encoding of those operations is delegated to whichever `risc_*.h` backend was compiled in — a statement about the *guest* instruction being translated, with the host-specific spelling left to the backend. The bytes that come out differ completely depending on which backend header got compiled in: `risc_x64.h` emits x86-64 encodings, `risc_armv8le.h` emits AArch64 encodings, `risc_mipsel32.h` emits MIPS encodings, for the identical decoder-level call. The guest instruction semantics live in one place, decoded once regardless of host; the "how do I express this on host hardware" logic lives in a swappable backend that has no knowledge of DOS, x86-16 addressing modes, or anything guest-side at all. That separation is precisely the constraint @section(dynamic-recompilation/two-implementations-one-idea) said `dynrec` holds itself to and `core_dyn_x86` doesn't — this is the section where that abstract claim becomes a concrete one, in code.
+
+## 7.7 The Cycle Check Lives Inside the Generated Code {#the-cycle-check-lives-inside-the-generated-code}
+
+Here's a detail that ties directly back to @chapter(main-loop-and-event-scheduler), and it's easy to miss if you don't already know to look for it. @chapter(interpreter-core)'s interpreter checked `CPU_Cycles` in a C++ `while` loop, once per instruction, in code the compiler built when DOSBox-X itself was built. `dynrec` can't do that — once a cache block starts running, control has left the interpreter's loop entirely and is executing raw host instructions. So the cycle check has to be *compiled into the block itself*, at translation time:
+
+```cpp
+// start with the cycles check
+gen_mov_word_to_reg(FC_RETOP, &CPU_Cycles, true);
+save_info_dynrec[used_save_info_dynrec].branch_pos =
+    gen_create_branch_long_leqzero(FC_RETOP);
+save_info_dynrec[used_save_info_dynrec].type = cycle_check;
+used_save_info_dynrec++;
+```
+
+Every cache block, as one of the first things `CreateCacheBlock()` generates for it, gets host code that loads the live `CPU_Cycles` value and branches out of the block if it's already zero or negative. This is the same budget from @chapter(main-loop-and-event-scheduler)'s `PIC_RunQueue()` — the mechanism enforcing it just moved from "a C++ loop condition" to "a conditional branch instruction physically present in the compiled block." When that branch fires, execution returns to `CPU_Core_Dynrec_Run()` with a `BR_Cycles` result code:
+
+```cpp
+case BR_Cycles:
+    // cycles went negative, return from the core to handle
+    // external events, schedule the pic...
+    return CBRET_NONE;
+```
+
+— which unwinds straight back out to `Normal_Loop` (@section(main-loop-and-event-scheduler/normal-loop)), exactly where an exhausted cycle budget always has to end up, regardless of which CPU core produced it. The scheduler doesn't know or care whether the last core it called was interpreting or running compiled native code; both cores honor the same contract at the same boundary. Dynamic recompilation does not replace the scheduler's notion of execution budget. It moves the enforcement point into the generated machine code — the same budget, now checked by a branch physically present in the translated block rather than by a C++ loop condition.
+
+## 7.8 Why a Translated Block Stops {#why-a-translated-block-stops}
+
+A translated block is executable host code *derived from* guest code, and the book's recurring theme — a CPU core is not just an instruction executor, it is an execution participant that must know when to surrender control — applies to it every bit as much as to the interpreter. A block does not run forever; it stops, and *why* it stops determines where control goes next. The possible exits are few, and naming them up front helps, because nearly every mechanism in the rest of this chapter is one of them:
+
+```text
+Translated block
+      │
+      ├── cycle budget exhausted ─────→ scheduler
+      │
+      ├── direct branch target ───────→ linked block
+      │
+      ├── unresolved / indirect flow ──→ dispatcher
+      │
+      ├── unsupported instruction ─────→ normal core
+      │
+      ├── interrupt / trap-sensitive ──→ common CPU machinery
+      │
+      └── self-modification ───────────→ invalidate / retranslate
+```
+
+The `BR_Cycles` exit (return to the scheduler, @section(dynamic-recompilation/the-cycle-check-lives-inside-the-generated-code)) and the direct-link exits (stay in native code, @section(dynamic-recompilation/chaining-blocks-without-leaving-native-code)) are the common, fast paths. The others — a dispatcher lookup, a one-instruction borrow of the interpreter, or a trip through the shared interrupt/exception machinery in @chapter(interrupts-exceptions-pic) — are the escape hatches that keep the cached representation honest when the assumptions it was translated under no longer hold. Keeping this taxonomy in view makes the next two sections read as "which exit, and why" rather than as a list of unrelated features.
+
+## 7.9 Chaining Blocks Without Leaving Native Code {#chaining-blocks-without-leaving-native-code}
+
+A single 32-instruction cache block is already a win over re-decoding every instruction, but the bigger win comes from what happens at a block's *end*. Guest code is full of unconditional jumps and predictable branches — the back-edge of a loop, a `call` to a subroutine — and if every one of those forced a return all the way out to `CPU_Core_Dynrec_Run()` just to look up the next block, most of the benefit of compiling in the first place would be lost to that round-trip.
+
+`dynrec` avoids this with **block linking**. `CacheBlockDynRec::LinkTo()` records that one block's exit point can jump directly to another block's entry point:
+
+```cpp
+void LinkTo(Bitu index, CacheBlockDynRec * toblock) {
+    link[index].to = toblock;
+    link[index].next = toblock->link[index].from;
+    toblock->link[index].from = this;
+}
+```
+
+Once two blocks are linked, control can pass from the end of one compiled block straight into the start of the next via a native jump instruction generated directly into the code cache — no return to `CPU_Core_Dynrec_Run()`, no lookup, no C++ involved at all. The first time a given control-flow edge is taken, though, the target block may not exist yet or may not be linked yet, and the compiled code has to fall back to asking the C++ side for help:
+
+```cpp
+case BR_Link1:
+case BR_Link2:
+    block = LinkBlocks(ret);
+    if (block) goto run_block;
+    break;
+```
+
+`LinkBlocks()` resolves (and, if necessary, creates) the target block and patches the link the next time this edge is taken, so subsequent passes through the same branch chain entirely inside compiled code. This is a caching strategy in the fullest sense — not just "cache the translation of these bytes," but "cache the resolved control-flow edges between already translated blocks." When the relevant blocks have been translated and their direct edges linked, a hot loop can run for its entire duration as a sequence of native jumps between pre-compiled blocks, with the interpreter's fetch/decode overhead paid exactly once, at first execution. The distinction matters: a direct, predictable branch target becomes a native link, but an indirect target or a return still has to leave the block and re-enter the dispatcher for a lookup or a fresh translation — the linked path is an optimization of the common case, not a replacement for the dispatcher.
+
+## 7.10 Self-Modifying Code: The Fast Path's Achilles Heel {#self-modifying-code-the-fast-path-s-achilles-heel}
+
+Caching compiled translations only works if the bytes those translations were built from stay the same. DOS-era software doesn't always cooperate — self-modifying code (patching instructions at runtime, common in period copy-protection schemes and some tight optimization tricks) is a real and recurring pattern in the corpus `dynrec` has to run correctly. So every code page that has been translated gets watched.
+
+Recall from @chapter(memory-model-and-address-translation) that any address range can be backed by a `PageHandler` that intercepts reads and writes. `CodePageHandlerDynRec` — the object responsible for a page that currently contains compiled code — *is* a `PageHandler`:
+
+```cpp
+class CodePageHandlerDynRec : public PageHandler {
+    ...
+    void writeb(PhysPt addr, uint8_t val) override {
+        addr &= 4095;
+        if (host_readb(hostmem + addr) == val) return;  // no actual change
+        host_writeb(hostmem + addr, val);
+        if (!host_readb(&write_map[addr])) {
+            // no cache block currently covers this byte — nothing to invalidate
+            ...
+            return;
+        }
+        // this byte is part of a translated block — the translation is now stale
+        if (!invalidation_map) { /* allocate, zero-fill */ }
+        invalidation_map[addr]++;
+        InvalidateRange(addr, addr);
+    }
+};
+```
+
+That's the payoff of @section(memory-model-and-address-translation/from-address-translation-to-memory-mapping) arriving a chapter later than you might have expected it to: because the emulated memory system already provides `PageHandler` dispatch for the relevant memory accesses, giving a compiled code page self-modification awareness doesn't require bolting on a separate write-monitoring mechanism — it only requires registering a `PageHandler` subclass for that page that happens to also track which cache blocks depend on which bytes, via `write_map`, and blow away (`InvalidateRange`) any block whose source bytes just changed underneath it.
+
+`invalidation_map` adds one more layer of nuance. A page that gets modified once, rarely, is one thing — recompile the affected block and move on. But some code deliberately rewrites the same bytes over and over (self-decrypting loaders, certain optimization patterns), and if `dynrec` naively tried to recompile such a page every single time it changed, the "dynamic" core could end up slower than the interpreter it's supposed to outperform. `invalidation_map` counts how many times each byte has triggered an invalidation, and once the invalidation count reaches the implementation's threshold, the translator gives up trying to compile that region at all:
+
+```cpp
+if (!chandler->invalidation_map || (chandler->invalidation_map[ip_point&4095] < 4)) {
+    block = CreateCacheBlock(chandler, ip_point, 32);
+} else {
+    // let the normal core handle this instruction to avoid zero-sized blocks
+    ...
+    return CPU_Core_Normal_Run();
+}
+```
+
+At this commit the guard is `invalidation_map[...] < 4`, so a count of four invalidations at the same byte offset is what hands the region back to the interpreter. A page that's rewritten itself four or more times at the same byte offset stops being treated as compilable code and falls back, instruction by instruction, to @chapter(interpreter-core)'s interpreter — which pays the decode cost every time, but never has to worry about a stale translation, because it never caches a translation in the first place. This is the same tradeoff DOSBox-X made explicitly with paging in @section(dynamic-recompilation/same-contract-different-machinery), generalized: the dynamic core is not obligated to be the fastest option for every byte of guest code, only to correctly recognize the regions where its central assumption — "these bytes won't change under me" — stops holding, and hand those regions back to the core that doesn't need that assumption at all.
+
+That's `dynrec`, start to finish: a cycle-budget guard identical to the interpreter's, a decoder that emits host code instead of executing guest semantics directly, a cycle check compiled into every block, block linking to avoid repeated C++ round-trips, and self-modifying-code detection built entirely out of @chapter(memory-model-and-address-translation)'s own `PageHandler` mechanism. Every one of those choices was shaped by the constraint @section(dynamic-recompilation/two-implementations-one-idea) named at the outset — keep the code generator ignorant of anything host-specific — and it's worth carrying that constraint forward, because the next two sections are about a core that dropped it.
+
+## 7.11 Where `core_dyn_x86` Diverges: A Register Allocator, Not Just a Code Generator {#where-core-dyn-x86-diverges-a-register-allocator-not-just-a-code-generator}
+
+`dynrec` does not try to keep guest registers resident in host registers across instructions. `dyn_dop_ebgb`'s dynrec version, when it needs a guest register operand, generates a move from that register's home (the guest `CPU_Regs` struct in memory) into a fixed temporary host register (`FC_OP1`, `FC_OP2`), performs the operation there, and generates a move back out to memory before the instruction ends — every time, for every instruction. No guest register value survives in a host register from one guest instruction to the next; the fixed temporaries are reloaded and spilled around each operation.
+
+```text
+dynrec
+guest register
+    ↓
+load → temporary host register
+    ↓
+operation
+    ↓
+store back to guest state
+```
+
+versus
+
+```text
+core_dyn_x86
+guest register
+    ↕
+persistent host register
+    ↓
+operation
+    ↓
+still resident
+```
+
+`core_dyn_x86`'s equivalent function doesn't move guest register values through memory as a matter of course. Its version of `dyn_dop_ebgb` operates on `DynReg` objects — one per guest register, held in a fixed array:
+
+```cpp
+struct DynReg {
+    Bitu flags;
+    GenReg * genreg;   // the host register currently holding this guest register's value, or null
+    void * data;       // where in guest CPU state this register lives when it's NOT in a host register
+};
+static DynReg DynRegs[G_MAX];
+```
+
+`genreg` is the crux of it: a `DynReg` with a non-null `genreg` means that guest register's value is *currently sitting in a host register*, and doesn't need to be reloaded to be operated on again. `FindDynReg()` — implemented separately per host backend, since "which host registers exist" is exactly the kind of question dynrec's `gen_*` functions were built never to need answered at the guest-decoding layer — is where that decision gets made:
+
+```cpp
+static GenReg * FindDynReg(DynReg * dynreg, bool stale=false) {
+    x64gen.last_used++;
+    if (dynreg->genreg) {
+        dynreg->genreg->last_used = x64gen.last_used;
+        return dynreg->genreg;                       // already resident — nothing to generate
+    }
+    /* look for a free host register first... */
+    for (i = first_index = 0; i <= 3; i++) {
+        GenReg * genreg = x64gen.regs[i];
+        if (!(genreg->dynreg)) { genreg->Load(dynreg, stale); return genreg; }
+        if (genreg->last_used < (Bitu)first_used) { first_used = genreg->last_used; first_index = i; }
+    }
+    /* ...no free one? evict whichever host register was used longest ago */
+    GenReg * newreg = x64gen.regs[first_index];
+    newreg->Load(dynreg, stale);
+    return newreg;
+}
+```
+
+That's a small, genuine least-recently-used register allocator: a `last_used` counter stamped on every access, a scan for a free host register, and — only if every candidate is already occupied — an eviction of whichever one has gone longest untouched. `newreg->Load(dynreg, stale)` is the spill/reload step, generating the actual host move instruction only when one is needed. A guest `ADD`, `MOV`, `ADD` sequence touching the same register three times in a row can, if that guest register remains associated with the same host register across the sequence, execute all three without a single load or store to guest memory in between — something dynrec's fixed-scratch-register approach can never do, because it never asks "is this value already somewhere convenient" in the first place.
+
+This is exactly what @section(dynamic-recompilation/what-emitting-code-actually-means) meant by "keeping the code generator ignorant of the guest," made concrete from the other side: dynrec's `gen_*` layer was deliberately kept ignorant of anything about the guest, so it could be swapped wholesale for an ARM or MIPS backend. `core_dyn_x86`'s `FindDynReg()` can't be swapped that cheaply — it's making decisions (which host register, evict what, when) that are only sensible because it also knows what a `DynReg` is and how guest instructions use one. Tying code generation to a specific host register file is exactly the freedom a single-target core has that a portable one deliberately gives up.
+
+## 7.12 Where `core_dyn_x86` Diverges: Page Faults That Don't End the Block {#where-core-dyn-x86-diverges-page-faults-that-don-t-end-the-block}
+
+@section(dynamic-recompilation/same-contract-different-machinery) quoted `dynrec`'s own warning comment about paging: *"Do not use dynamic core if paging is enabled... it will turn around and cause Windows 95 to crash."* `dynrec` doesn't try to answer the question "what if translating or running this block hits a page fault partway through" — it simply refuses to run at all while `paging.enabled` is true (unless the person running DOSBox-X explicitly overrides that with `use_dynamic_core_with_paging`).
+
+`core_dyn_x86` treats paging the same way as a compatibility boundary, not a feature it freely supports. With `use_dynamic_core_with_paging` left off, it too declines to translate through the page fault and falls back to the normal core — the same outcome as `dynrec`. What distinguishes it is that, *when that option is enabled*, it has an additional page-fault-aware translation path that `dynrec` does not:
+
+```cpp
+CacheBlock * block = chandler->FindCacheBlock(ip_point&4095);
+if (!block) {
+    if (!chandler->invalidation_map || (chandler->invalidation_map[ip_point&4095] < 4)) {
+        decoder_pagefault.had_pagefault = false;
+        int cache_size = dynamic_core_cache_block_size;
+        block = CreateCacheBlock(chandler, ip_point, cache_size);
+        while (decoder_pagefault.had_pagefault) {
+            // Can happen only if use_dynamic_core_with_paging is on.
+            // We can't throw an exception during block creation — it would corrupt things.
+            // If a page fault occurred, invalidate the block and try a smaller one instead.
+            // If the fault is in the very first instruction, there's nowhere smaller to go.
+            block->Clear();
+            if (cache_size == 1)
+                throw GuestPageFaultException(decoder_pagefault.lin_addr, decoder_pagefault.page_addr, decoder_pagefault.faultcode);
+            cache_size /= 2;
+            decoder_pagefault.had_pagefault = false;
+            block = CreateCacheBlock(chandler, ip_point, cache_size);
+        }
+    }
+    ...
+}
+```
+
+Translating a block of guest instructions means reading guest memory to decode them — and under paging, that read can itself fault, on a page that simply hasn't been mapped in yet. Rather than treat that as fatal, `CreateCacheBlock()` here can fail partway through, get thrown away (`block->Clear()`), and get retried at half the batch size — repeatedly, down to a single instruction — on the theory that a smaller translation window reduces the number of guest instructions whose memory must be successfully decoded before the block can be completed. Only once even a one-instruction block still faults does it give up and throw `GuestPageFaultException` for real, letting @chapter(interrupts-exceptions-pic)'s exception machinery take over from there. This retry-by-shrinking strategy is precisely why the engine's own config text can say `dynamic_x86` is "preferred" over `dynamic_rec` and why Windows 95 — which depends on paging essentially always being on — is usable under it at all: it isn't that `core_dyn_x86` is immune to the problem `dynrec` declines to solve, it's that, with the option enabled, this core actually built a way to keep translating in the face of it.
+
+One detail carries over almost verbatim from @section(dynamic-recompilation/self-modifying-code-the-fast-path-s-achilles-heel)'s own self-modifying-code fallback: the same-shaped "no block found, and this address has rewritten itself too many times to keep compiling" logic appears here too, with the identical `< 4` threshold and the identical single-instruction detour through the normal core:
+
+```cpp
+} else {
+    int32_t old_cycles = (int32_t)CPU_Cycles;
+    CPU_Cycles = 1;
+    CPU_CycleLeft += old_cycles;
+    Bits nc_retcode = Safe_CPU_Core_Normal_Run();
+    if (!nc_retcode) {
+        CPU_Cycles = old_cycles - 1;
+        CPU_CycleLeft -= old_cycles;
+        goto restart_core;
+    }
+    return nc_retcode;
+}
+```
+
+This is the same borrow-the-interpreter-for-one-instruction-then-come-back idiom @section(dynamic-recompilation/self-modifying-code-the-fast-path-s-achilles-heel) already established for `dynrec` — right down to the cycle-budget juggling — just spelled with `goto restart_core` where `dynrec` used `continue`. Whatever else differs between these two cores, DOSBox-X answered "how much of the interpreter do we borrow when a byte range won't stay compiled" the same way twice, independently.
+
+## 7.13 Where They Converge: What Didn't Need Reinventing {#where-they-converge-what-didn-t-need-reinventing}
+
+Two sections of real divergence might suggest `core_dyn_x86` and `dynrec` share nothing beyond the name and the general idea. They share considerably more than that. The block-management layer underneath both is, in places, identical enough to have plainly come from the same design, not just the same idea. `core_dyn_x86/cache.h` declares:
+
+```cpp
+class CacheBlock {
+public:
+    void LinkTo(Bitu index, CacheBlock * toblock) {
+        assert(toblock);
+        link[index].to = toblock;
+        link[index].next = toblock->link[index].from;
+        toblock->link[index].from = this;
+    }
+    struct { uint16_t start,end; CodePageHandler * handler; } page;
+    struct { uint8_t * start; uint8_t * xstart; Bitu size; CacheBlock * next;
+             uint8_t * wmapmask; uint16_t maskstart; uint16_t masklen; } cache;
+    struct { Bitu index; CacheBlock * next; } hash;
+    struct { CacheBlock * to; CacheBlock * next; CacheBlock * from; } link[2];
+    CacheBlock * crossblock;
+};
+```
+
+Set this next to @section(dynamic-recompilation/translation-units-cache-blocks)'s `CacheBlockDynRec` and the structural similarity is striking: the two cache-block representations contain the same basic page, cache, hash, and link concepts, and `LinkTo()` follows the same pattern — a recognisable block-management design shared across both cores, not merely the same abstract idea. `CodePageHandler` (no suffix, versus dynrec's `CodePageHandlerDynRec`) plays the same role against the same `PageHandler` base @chapter(memory-model-and-address-translation) built, and its self-modifying-code detection uses the identical `invalidation_map`/threshold-of-4 scheme @section(dynamic-recompilation/self-modifying-code-the-fast-path-s-achilles-heel) already covered. None of that is a coincidence worth explaining away — it's evidence that `dynrec`'s block-caching design didn't appear from nothing when this chapter introduced it in @section(dynamic-recompilation/translation-units-cache-blocks). It's `core_dyn_x86`'s design, carried forward largely unchanged, with the parts that had to change — code generation, register handling, what to do about paging — rebuilt around a much stricter rule about what the guest-facing layer is allowed to know.
+
+### Three kinds of reuse
+
+The shared lineage is worth making explicit, because it is more than "the classes look alike":
+
+**Shared architectural contract.** Both cores must start from `CS:EIP`, find or construct a translated block, execute it, honour the cycle budget, detect exits, invalidate stale translations, and fall back to the normal core where necessary.
+
+**Shared block-management design.** Both use cache blocks, page handlers, hashes, incoming and outgoing links, and invalidation tracking — the machinery just examined above.
+
+**Different translation machinery.** They differ in host register management, host instruction generation, paging/page-fault handling, and the degree of guest/host coupling.
+
+That is a more useful conclusion than simply noting the classes resemble one another: the contract and the management design are shared, and only the translation engine differs.
+
+## 7.14 Two Cores, One Honest Tradeoff {#two-cores-one-honest-tradeoff}
+
+Neither of these cores is strictly better than the other, and DOSBox-X doesn't pretend otherwise — it ships both and lets `core=dynamic_x86` vs `core=dynamic_rec` be a real choice, not a deprecated one. `dynrec` gave up register caching and paging tolerance in exchange for a `gen_*` layer that can be rewritten once per host architecture instead of once per feature. `core_dyn_x86` kept both, and paid for it with exactly the coupling that makes it x86/x64-host-specific: an LRU allocator over a specific register file, and page-fault recovery logic threaded through the block translator, are not things you can lift into an ARM backend by swapping out one header the way dynrec's `risc_armv8le.h` can be swapped in for `risc_x64.h`.
+
+That's the tradeoff @section(dynamic-recompilation/two-implementations-one-idea) opened with and this chapter has now shown, piece by piece: portability and this particular kind of performance were never free to have simultaneously, and DOSBox-X kept the core that had already solved register caching and page-fault tolerance for one host, then wrote a second one for every host the first couldn't reach.
+
+The deeper point is what dynamic recompilation *adds* to the emulator. It is not merely a faster way to run guest instructions; it introduces a **cached, executable representation of guest execution** — a body of host instructions whose correctness depends on the guest state, memory mappings, control-flow assumptions, and execution budget all remaining compatible with the assumptions made at translation time. A translated block is executable host state *derived from* guest state, and its validity rests on assumptions about guest bytes, address translation, register representation, control-flow targets, the execution budget, and CPU mode. That representation is therefore not independent of the rest of the emulator. The cycle budget comes from the scheduler (@chapter(main-loop-and-event-scheduler)). Guest memory comes through the memory system (@chapter(memory-model-and-address-translation)). Code invalidation depends on page handlers. Exceptional and interrupt-driven exits ultimately return to the same CPU machinery the interpreter uses (@chapter(interpreter-core)). Dynamic recompilation is a new execution mechanism, not a separate machine.
+
+And it does not get to redefine what happens when execution must be interrupted. A hardware IRQ, a software `INT`, a trap, or a CPU exception eventually crosses back from the execution core — interpreter or dynamic — into the common interrupt machinery. The next chapter follows that boundary.
+
+---
+
+*Next: @chapter(interrupts-exceptions-pic) — Interrupts, Exceptions, and the PIC. Dynamic recompilation changes how guest instructions execute, but it does not get to redefine what happens when execution must be interrupted. A hardware IRQ, a software `INT`, a trap, or a CPU exception eventually crosses back from the execution core into the common interrupt machinery. The next chapter follows that boundary: once execution has been compiled into another representation, what happens when an interrupt or exception forces that execution to stop?*

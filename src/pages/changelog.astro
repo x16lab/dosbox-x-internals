@@ -1,0 +1,165 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { SITE } from '../consts';
+import { version } from '../lib/build';
+
+const changelog = [
+  {
+    version,
+    date: '2026-08-01',
+    description: 'Book-wide cross-references added, diagram loading automated, and Chapter 3 expanded with five new diagrams.',
+    changes: [
+      'Added the `astro-book-references` integration package with chapter and section indexing, validation, and test coverage',
+      'Converted prose references throughout every chapter and appendix to linked `@chapter` and `@section` macros',
+      'Added stable explicit anchors to section headings and configured chapter numbering to begin with Chapter 1',
+      'Added optional explicit labels and support for reference macros in heading text',
+      'Updated `Diagram.astro` to resolve any SVG in `src/assets/diagrams/` by filename without hand-maintained imports',
+      'Added five diagrams to Chapter 3 covering the main loop, event queue, cycle budget, timing frequencies, and host sleep behavior',
+    ],
+  },
+  {
+    version: '0.1.8',
+    date: '2026-08-01',
+    description: 'Chapter 16 published, glossary expanded, diagrams integrated, and Astro markdown config modernized.',
+    changes: [
+      'Published Chapter 16 — Extensions (Dosbox-X-specific extensions), enabled in navigation',
+      'Integrated the interpreter-vs-dynamic-recompiler comparison diagram into Chapter 6',
+      'Expanded the Appendix A glossary with ~26 entries covering chapters 9–17',
+      'Removed dead `.disabled`/`.part` code paths from the table-of-contents, reader, and index pages',
+      'Fixed DOM type errors in the reader layout script',
+      'Migrated `markdown.remarkPlugins` to the unified() processor API',
+      'Excluded the untracked `dosbot-x` checkout from the TypeScript configuration scope',
+      'Centered the hero accent line on the eyebrow bar for consistent alignment across viewport sizes',
+      'Added `part` frontmatter to all chapters and appendices for grouping and navigation',
+    ],
+  },
+  {
+    version: '0.1.7',
+    date: '2026-07-31',
+    description: 'Chapters 14 and 17 published, chapter 6 rewritten as a two-cores deep dive, diagrams consolidated as inline SVG, and appendices extended.',
+    changes: [
+      'Published Chapter 14 — Timing and Cycle Management',
+      'Published Chapter 17 — Debugging and Instrumentation',
+      'Rewrote Chapter 6 as a two-cores deep dive: dynrec vs core_dyn_x86, register allocation, page-fault tolerance, and block-management convergence (§6.2–6.13)',
+      'Added glossary terms (DSP, MidiHandler, wavetable synthesis, register allocator)',
+      'Extended source map with sound subsystem and core_dyn_x86 entries',
+      'Consolidated diagrams into src/assets as inline SVG (dark/light mode aware), added VGA sub-chip block diagram',
+      'Removed placeholder sibling chapters 5.8 and 6.9',
+      'Enabled chapter 17 in navigation',
+    ],
+  },
+  {
+    version: '0.1.6',
+    date: '2026-07-30',
+    description: 'Chapters 8–10 published, chapters 7–10 restructured as guided descents, and site privacy/compliance features added.',
+    changes: [
+      'Published Chapter 8 — VGA/SVGA Emulation',
+      'Published Chapter 9 — DMA and the PIT',
+      'Published Chapter 10 — Sound',
+      'Restructured chapters 7–10 with guided-descent narrative (historical concept → hardware architecture → source implementation)',
+      'Added DAC 6-bit masking coverage with Amulets and Armor compatibility example in Chapter 8',
+      'Updated site URL and repo to x16lab GitHub organization',
+      'Added privacy policy, cookie consent, and sitemap pages',
+      'Added Google site verification meta tag',
+      'Fixed TOC chapter ordering (sort by order field)',
+    ],
+  },
+  {
+    version: '0.1.5',
+    date: '2026-07-27',
+    description: 'Chapter 15 published, all four appendices added, content revisions, and site fixes.',
+    changes: [
+      'Published Chapter 15 — Host Abstraction via SDL',
+      'Published all four appendices (A: Glossary, B: Comparative Table, C: Source Map, D: Configuration Reference)',
+      'Enabled appendix links on the home page (were disabled placeholders)',
+      'Revised chapters 2–4 with proofed/refined content',
+      'Removed temp/ working files from git tracking',
+    ],
+  },
+  {
+    version: '0.1.4',
+    date: '2026-07-26',
+    description: 'Reader UI refinements — unified navigation, TOC panel spacing, and typography.',
+    changes: [
+      'Unified main navigation across all layouts (site-header class)',
+      'Reduced and equalized TOC panel header padding for balanced spacing',
+      'Vertically centered Contents heading and close button in TOC header',
+      'Matched TOC header title and close button font to brand heading',
+      'Fixed hamburger icon centering in TOC FAB button',
+    ],
+  },
+  {
+    version: '0.1.3 ',
+    date: '2026-07-26',
+    description: 'Site reorganization — dedicated Table of Contents page, updated navigation, and reader sidebar improvements.',
+    changes: [
+      'Created /toc/ page with detailed section-level table of contents',
+      'Moved chapter-by-chapter overview to home page with Parts I–V structure',
+      'Added chapter numbers to reader sidebar and toc-sublist headings',
+      'Full main navigation shown in reader and chapter page headers',
+      'Reordered nav: Contents before Read',
+      'Updated chapter frontmatter descriptions with proofed text',
+      'Highlight current toc-sublink heading on scroll in reader',
+    ],
+  },
+  {
+    version: '0.1.2',
+    date: '2026-07-26',
+    description: 'License page, Chapter 7 published, and expanded future roadmap.',
+    changes: [
+      'Added /license/ page with copyright notice and All Rights Reserved in footer',
+      'Integrated Chapter 7: Interrupts, Exceptions, and the PIC',
+      'Expanded FUTURE_CHAPTERS with full roadmap (chapters 8–17)',
+      'Added Versioning section to README with release instructions',
+    ],
+  },
+  {
+    version: '0.1.1',
+    date: '2026-07-26',
+    description: 'Site refinements: versioning, license, and proofed chapter content.',
+    changes: [
+      'Display version and commit hash in site footer',
+      'Read version from package.json at build time (single source of truth)',
+      'Expanded Chapter 6 §6.4 with guest-vs-host instruction set clarification',
+      'Added License nav item and /license/ page',
+      'Updated LICENSE to permissive personal-use terms',
+      'Added versioning documentation to README',
+    ],
+  },
+  {
+    version: '0.1.0',
+    date: '2026-07-26',
+    description: 'Initial release. Covers the first six chapters of Inside DOSBox-X: introduction, architecture, main loop and event scheduler, memory model, interpreter core, and dynamic recompilation.',
+    changes: [
+      'Set up Astro-based documentation site with MDX',
+      'Implemented reader (single-page) and chapter-by-chapter layouts',
+      'Added full-text search via Pagefind',
+      'Published chapters 0–6 of the book',
+    ],
+  },
+];
+---
+
+<BaseLayout title={`Changelog — ${SITE.title}`} description="Release history for Inside DOSBox-X.">
+  <section class="page-head section">
+    <p class="eyebrow">Changelog</p>
+    <h1>Release History</h1>
+  </section>
+
+  <section class="section">
+    {
+      changelog.map((entry) => (
+        <article style="margin-bottom: 2.5rem;">
+          <h2 style="display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.5rem;">
+            <span>v{entry.version}</span>
+            <time datetime={entry.date} style="font-size: 0.875rem; font-weight: 400; opacity: 0.6;">{entry.date}</time>
+          </h2>
+          <p style="margin-bottom: 1rem;">{entry.description}</p>
+          <ul>
+            {entry.changes.map((item) => <li>{item}</li>)}
+          </ul>
+        </article>
+      ))
+    }
+  </section>
+</BaseLayout>

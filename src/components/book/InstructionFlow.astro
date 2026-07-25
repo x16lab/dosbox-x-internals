@@ -1,0 +1,50 @@
+---
+interface Props {
+  title?: string;
+}
+
+const { title } = Astro.props;
+---
+
+<figure class="instruction-flow">
+  {title && <figcaption>{title}</figcaption>}
+  <div class="flow-content">
+    <slot />
+  </div>
+</figure>
+
+<style>
+  .instruction-flow {
+    margin: calc(var(--baseline) * 1.5) 0;
+    padding: var(--baseline);
+    border: var(--hairline);
+    background: var(--color-surface);
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    line-height: 1.8;
+  }
+
+  .instruction-flow figcaption {
+    margin-bottom: 0.75rem;
+    color: var(--color-accent);
+    font-family: var(--font-body);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.82rem;
+  }
+
+  .flow-content :global(.step) {
+    display: block;
+    padding: 0.25rem 0.5rem;
+    border-left: 3px solid var(--color-accent);
+    margin-bottom: 0.25rem;
+  }
+
+  .flow-content :global(.step-arrow) {
+    display: block;
+    color: var(--color-accent);
+    padding: 0.1rem 0.5rem;
+    font-size: 0.75rem;
+  }
+</style>

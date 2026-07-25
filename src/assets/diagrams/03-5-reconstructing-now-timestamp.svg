@@ -1,0 +1,121 @@
+<svg viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <style>
+            svg {
+            /* Global */
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            /* Indigo — latched / pending / default active state */
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            /* Green — dispatched / in-service / success (used here for "derived, not stored") */
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            /* Orange — blocking / warning / caveat */
+            --orange-footnote: #9a3412;
+
+            /* Structural / page furniture */
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            /* Gray — idle / neutral (plain stored variable) */
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Title / subtitle -->
+    <text x="450" y="40" text-anchor="middle" font-size="22" font-weight="700" fill="var(--fg-title)">RECONSTRUCTING THE &#8220;NOW&#8221; TIMESTAMP</text>
+    <text x="450" y="64" text-anchor="middle" font-size="14" fill="var(--fg-subtitle)">PIC_FullIndex() = PIC_Ticks + PIC_TickIndex()</text>
+
+    <!-- Panel 1: PIC_Ticks (gray — real, stored variable) -->
+    <text x="230" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="var(--box-text)">PIC_Ticks &#8212; integer ms (stored)</text>
+    <rect x="120" y="118" width="220" height="70" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="230" y="162" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="22" fill="var(--box-text)">12345</text>
+
+    <!-- Plus sign -->
+    <text x="450" y="162" text-anchor="middle" font-size="24" fill="var(--fg-subtitle)">+</text>
+
+    <!-- Panel 2: PIC_TickIndex() (green — derived, not stored) -->
+    <text x="670" y="106" text-anchor="middle" font-size="13" font-weight="700" fill="var(--green-label)">PIC_TickIndex() &#8212; fraction (derived)</text>
+    <rect x="560" y="118" width="220" height="70" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="670" y="162" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="22" fill="var(--green-code)">0.4</text>
+
+    <!-- Converging lines -->
+    <path d="M230,188 L230,214 L450,214" fill="none" stroke="var(--arrow)" stroke-width="1.5"/>
+    <path d="M670,188 L670,214 L450,214" fill="none" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="450" y1="214" x2="450" y2="244" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Result panel: PIC_FullIndex() (green — derived, no backing variable) -->
+    <rect x="310" y="256" width="280" height="96" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="2"/>
+    <text x="450" y="284" text-anchor="middle" font-size="14" font-weight="700" fill="var(--green-label)">PIC_FullIndex()</text>
+    <text x="450" y="314" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="24" fill="var(--green-code)">12345.4</text>
+    <text x="450" y="336" text-anchor="middle" font-size="12" fill="var(--green-note)">guest milliseconds since the last reset</text>
+
+    <!-- Footer -->
+    <line x1="120" y1="384" x2="780" y2="384" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="120" y="410" font-size="14" font-weight="700" fill="var(--footer-text)">There is no single variable holding this value.</text>
+    <text x="120" y="430" font-size="12" fill="var(--footer-subtext)">PIC_FullIndex() is recomputed on demand from PIC_Ticks and the live cycle counters — both static INLINE functions, not stored state.</text>
+
+    <!-- Chip row -->
+    <g font-size="11" font-weight="700">
+        <rect x="120" y="448" width="14" height="14" rx="3" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="140" y="459" fill="var(--box-text)">Real, stored variable</text>
+
+        <rect x="330" y="448" width="14" height="14" rx="3" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <text x="350" y="459" fill="var(--green-label)">Derived, not stored</text>
+    </g>
+
+    <!-- Italic caveat footnote -->
+    <text x="120" y="486" font-size="12" font-style="italic" fill="var(--orange-footnote)">PIC_Ticks resets to 0 on every guest reboot (PIC_Reset(), bound to VM_EVENT_RESET) &#8212;</text>
+    <text x="120" y="506" font-size="12" font-style="italic" fill="var(--orange-footnote)">not just once at emulator startup, so &#8220;since boot&#8221; means &#8220;since the current run began.&#8221;</text>
+</svg>

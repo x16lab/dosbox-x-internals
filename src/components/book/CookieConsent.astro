@@ -1,0 +1,68 @@
+---
+const GA_ID = import.meta.env.PUBLIC_GA_MEASUREMENT_ID || 'G-D2PMELWEP8';
+---
+
+{
+    GA_ID && (
+    <script define:vars={{ GA_ID }} is:inline>
+        (function () {
+            const key = 'cookie-consent';
+            let stored = null;
+            try {
+                stored = localStorage.getItem(key);
+            } catch (e) {
+                // Storage blocked/unavailable (e.g. private browsing) — fail closed, no tracking.
+                return;
+            }
+
+            function injectGA() {
+                const s = document.createElement('script');
+                s.src = 'https://www.googletagmanager.com/gtag/js?id=' + GA_ID;
+                s.async = true;
+                document.head.appendChild(s);
+                window.dataLayer = window.dataLayer || [];
+                function gtag() { dataLayer.push(arguments); }
+                gtag('js', new Date());
+                gtag('config', GA_ID);
+            }
+
+            function showBanner() {
+                const banner = document.createElement('div');
+                banner.id = 'cookie-consent-banner';
+                banner.innerHTML =
+                    '<p>This site uses Google Analytics for anonymous usage statistics. <a href="/dosbox-x-internals/privacy/" style="background-image:none;text-decoration:underline;text-underline-offset:0.2em;text-decoration-thickness:1px;text-decoration-color:var(--color-accent);">Learn more</a>.</p>' +
+                    '<div class="cookie-consent-actions" style="display:flex;align-items:center;gap:0.75rem;flex-shrink:0;">' +
+                    '<button data-cookie-accept style="padding:0.6rem 1.15rem;border:1px solid var(--color-accent,#b5490f);background:var(--color-accent,#b5490f);color:#fff;font:inherit;font-weight:700;font-size:0.85rem;cursor:pointer;">Accept</button>' +
+                    '<button data-cookie-decline style="padding:0.6rem 1.15rem;border:1px solid var(--color-line,#444);background:transparent;color:inherit;font:inherit;font-weight:700;font-size:0.85rem;cursor:pointer;">Decline</button>' +
+                    '</div>';
+                Object.assign(banner.style, {
+                    position: 'fixed', bottom: '0', left: '0', right: '0',
+                    background: 'var(--color-surface, #1a1a2e)',
+                    color: 'var(--color-text, #e0e0e0)',
+                    padding: '1rem 1.5rem', zIndex: '9999',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '1rem', flexWrap: 'wrap',
+                    borderTop: '1px solid var(--color-border, #333)',
+                    fontSize: '0.9rem', lineHeight: '1.5'
+                });
+                banner.querySelector('[data-cookie-accept]').addEventListener('click', function () {
+                    localStorage.setItem(key, 'accepted');
+                    injectGA();
+                    banner.remove();
+                });
+                banner.querySelector('[data-cookie-decline]').addEventListener('click', function () {
+                    localStorage.setItem(key, 'declined');
+                    banner.remove();
+                });
+                document.body.appendChild(banner);
+            }
+
+            if (stored === 'accepted') {
+                injectGA();
+            } else if (stored !== 'declined') {
+                showBanner();
+            }
+        })();
+    </script>
+        )
+    }

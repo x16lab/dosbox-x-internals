@@ -1,0 +1,55 @@
+---
+
+export interface Props {
+  /** Filename of an SVG in `src/assets/diagrams/`, with or without `.svg`. */
+  src: string;
+}
+
+const { src } = Astro.props;
+
+// Eagerly import *every* SVG in the diagrams folder as raw text. Any SVG
+// dropped into src/assets/diagrams/ is supported automatically — there is no
+// per-file import or hand-maintained map to keep in sync.
+//
+// `query: '?raw'` (NOT `?raw` inside the glob pattern, which would be treated
+// as literal filename characters and match nothing) makes Vite load each file
+// as its text content, and `import: 'default'` unwraps the raw SVG string.
+const diagrams = import.meta.glob<string>('../assets/diagrams/*.svg', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+});
+
+// Match `src` by basename, tolerating a missing `.svg` extension and any
+// `?raw` query string Vite appends to glob keys.
+const normalized = src.endsWith('.svg') ? src : `${src}.svg`;
+const svg = Object.entries(diagrams).find(
+  ([path]) => path.split('/').pop()?.split('?')[0] === normalized
+)?.[1];
+
+if (!svg) {
+  const available = Object.keys(diagrams)
+    .map((path) => path.split('/').pop()?.split('?')[0])
+    .filter(Boolean)
+    .sort();
+  throw new Error(
+    `Diagram not found: "${src}" in src/assets/diagrams/.\n` +
+      `Available diagrams:\n  ${available.join('\n  ')}`
+  );
+}
+---
+
+<div class="diagram" set:html={svg} />
+
+<style>
+  .diagram {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .diagram svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+</style>

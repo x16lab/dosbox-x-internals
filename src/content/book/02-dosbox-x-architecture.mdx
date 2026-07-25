@@ -1,0 +1,192 @@
+---
+title: "DOSBox-X Architecture"
+description: "A map of the emulator as a system: hardware modeled as independent modules and the five mechanisms they use to communicate — direct function calls, memory-mapped handler dispatch, I/O port trapping, interrupts, and callbacks. Also covers the configuration system."
+order: 2
+chapterSlug: "dosbox-x-architecture"
+part: "foundations"
+---
+# Chapter 2 — DOSBox-X Architecture {#chapter-2-dosbox-x-architecture}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 2.1 From History to Structure {#from-history-to-structure}
+
+@chapter(what-is-dosbox-x, short) made the case, historically, for why DOSBox-X has to emulate a CPU, memory, a PIC, a PIT, DMA, VGA, a DOS kernel, sound hardware, and storage controllers — because DOS-era software assumes direct, unmediated access to a specific and idiosyncratic set of 1980s-vintage hardware, and nothing less than modeling that hardware will convince the software the machine is still there.
+
+This chapter takes that list of obligations and asks a more practical question: as a piece of software, how is DOSBox-X actually put together to deliver on it? Before this book starts tracing execution through `main()`, it's worth having a map of the territory — what the major pieces are, how they're allowed to talk to each other, and where in the source tree each one lives.
+
+## 2.2 One Machine, Many Devices {#one-machine-many-devices}
+
+Before diving into DOSBox-X's source tree, it's worth asking a more basic question: why is the emulator divided into hardware-like modules at all? Unlike a physical computer, software has no wires, chips, or circuit boards. Nothing forces an emulator to resemble the machine it emulates. In principle, every instruction, device, and hardware interaction could be implemented inside one enormous program. Yet DOSBox-X deliberately separates the CPU, memory, video, sound, and peripheral devices into distinct subsystems. This organization is not meant to reproduce the physical packaging of a particular PC motherboard. Early IBM PCs implemented these functions as many individual chips, while later systems integrated them into one or more chipsets, and modern systems combine even more functionality into a single package. What remained remarkably stable across these generations were the architectural responsibilities—processing instructions, decoding memory accesses, arbitrating I/O, generating video, and producing sound. DOSBox-X mirrors those functional boundaries, not the number or arrangement of physical chips.
+
+The answer goes back to something @chapter(what-is-dosbox-x, short) already established and is worth making concrete here: a real IBM-compatible PC was never one integrated device. It was—and still is, in every modern descendant of the architecture—a collection of independent hardware components, each responsible for a specific part of the system. The CPU, memory, interrupt controllers, timers, DMA controller, video adapter, sound hardware, storage controllers, and expansion cards communicate through well-defined electrical interfaces rather than by knowing anything about each other's internal implementation.
+
+At the electrical level, those interfaces consist primarily of three kinds of signals: address lines (which location is being accessed), data lines (what value is being transferred), and control signals (whether the operation is a read or write, whether it targets memory or I/O space, and so on). When the CPU executes a memory access or an IN or OUT instruction, it does not "know" that it is talking to a VGA adapter, a programmable interval timer, or a Sound Blaster card. It simply places an address on the bus, presents or receives data, and asserts the appropriate control signals. The motherboard's address-decoding logic, together with the attached devices, ensures that whichever device owns that address responds.
+
+Although people often talk about "the PC bus," a real IBM-compatible machine contains several interconnected buses and interfaces: the processor bus, the memory subsystem, and expansion buses such as ISA. The emulator does not attempt to reproduce this electrical wiring. Instead, it reproduces the architectural model exposed to software: a CPU performing memory and I/O transactions against a shared address space and a separate I/O port space, with hardware devices responding according to the addresses and signals assigned to them.
+
+Address decoding is only part of the story. Not every interaction between hardware components is initiated by the CPU or identified by an address. The DMA controller (8237) can temporarily become the bus master, effectively "stealing" memory cycles from the CPU in order to transfer data directly between memory and peripherals. The interrupt controller (8259) receives interrupt request signals from other devices and notifies the CPU when service is required. Timers generate output signals, DMA controllers exchange request and acknowledge lines with peripherals, and many devices communicate through dedicated hardware signals that exist entirely outside the memory and I/O address spaces.
+
+The important architectural observation is that none of these components needs to understand how the others are implemented internally. A VGA adapter implements the VGA programming interface; it does not know how the timer counts. The timer generates output signals; it does not know how the sound card works. The interrupt controller arbitrates interrupt requests; it does not know why a device requested one. Each component implements its own externally visible interface—its registers, memory ranges, I/O ports, interrupt lines, or other hardware signals—and relies on the system architecture to connect it to everything else.
+
+That separation is a defining characteristic of the PC architecture, and it turns out to be exactly the property a large emulator needs. The same reasons hardware designers separated the original machine into independent components also apply to software: independent development, isolated testing, easier maintenance, and the ability for a reader—or a new contributor—to understand one subsystem without needing to hold the entire emulator in their head at once. DOSBox-X's own history, discussed in @chapter(what-is-dosbox-x, short), illustrates this well: graphics improvements, sound emulation, compatibility fixes, and new hardware support have all evolved largely independently because the boundaries between subsystems are well defined.
+
+DOSBox-X's modular source layout is therefore not simply a software-engineering convenience layered on top of the emulation. It is a direct translation of the architectural boundaries present in the original machine. The emulator does not reproduce the motherboard's traces or electrical circuitry, but it faithfully reproduces the interfaces those circuits expose to software. Each subsystem owns its own state, implements its own externally visible behavior, and communicates with the rest of the emulator through well-defined mechanisms that mirror the interactions between hardware components in a real PC.
+
+Keep that picture in mind for the rest of this chapter: one machine built from many independent devices, each responsible for a clearly defined interface rather than for the system as a whole. Nearly every communication mechanism described in the following sections turns out to be a software reimplementation of one specific way those hardware components interact inside an IBM-compatible PC.
+
+## 2.3 A Modular Hardware Model {#a-modular-hardware-model}
+
+The organizing idea is straightforward: **each major hardware subsystem exists as a distinct architectural module**, mirroring the fact that a real IBM-compatible PC was assembled from independent hardware components connected through defined interfaces and address spaces (a point @chapter(what-is-dosbox-x, short) made about the original 1981 machine, and one that remained true through every subsequent generation of "PC compatible"). "Module" here means something closer to *one subsystem owns one coherent piece of emulated hardware* than it means *one file per chip* — the file count varies enormously by how much behavior the underlying chip actually has. `pic.cpp`, `timer.cpp`, and `dma.cpp` really are single, self-contained translation units. VGA is not: `src/hardware/` holds `vga.cpp` plus over twenty companion files (`vga_dac.cpp`, `vga_draw.cpp`, `vga_seq.cpp`, and so on) splitting the SVGA chipset's register groups, drawing paths, and PC-98 variants apart, and the CPU cores in `src/cpu/` and the DOS-facing services in `src/ints/` are similarly spread across dozens of files each. What stays constant isn't the file count — it's that each of those subsystems is the one and only place in the codebase that owns its slice of emulated hardware state, however many files it takes to say so.
+
+A rough picture of how those groups relate:
+
+```text
+                    +------------------------------------+
+                    | Emulator Core / System Infrastructure  |
+                    |  CPU Core(s)   Memory Manager        |
+                    |  8259 PIC      8253 PIT   8237 DMA   |
+                    +------------------+-------------------+
+                                       |
+        +------------------------------+------------------------------+
+        |                              |                              |
++---------------+           +-------------------+          +--------------------+
+|   Hardware    |           |        DOS         |          |     Frontend       |
+| VGA/SVGA      |           | DOS Kernel         |          | SDL / Window       |
+| Sound (SB/    |           | BIOS               |          | Renderer           |
+|  OPL/GUS)     |           | EMS/XMS            |          | Configuration      |
+| Input (KB/    |           |                    |          |                    |
+|  Mouse/Stick) |           |                    |          |                    |
+| Disk (IDE/    |           |                    |          |                    |
+|  FDD/CD-ROM)  |           |                    |          |                    |
+| Serial/Par.   |           |                    |          |                    |
++---------------+           +-------------------+          +--------------------+
+```
+
+*(This is a grouping diagram, showing which subsystems belong to which layer — not a data-flow diagram. It doesn't show who calls whom or how often; @section(dosbox-x-architecture/how-modules-talk-to-each-other) covers that, and the communication between these groups is considerably richer than the diagram's top-to-bottom shape suggests.)*
+
+One of these groups deliberately does not participate in the hardware model at all: the Frontend box — SDL, window management, presentation — sits outside the bus-and-chips picture entirely, consuming finished output rather than emulating anything. @section(dosbox-x-architecture/configuration-as-its-own-layer) returns to why it gets drawn as a peer of Hardware and DOS here despite not being hardware itself.
+
+None of these groups is a black box to the others — the CPU core reads and writes memory ranges that devices such as VGA may expose, while DMA controllers initiate transfers involving memory and peripherals (@chapter(memory-model-and-address-translation, short) covers exactly how that sharing is arbitrated); the PIC and PIT drive interrupts the DOS kernel and BIOS both rely on; the frontend layer is where rendered video, mixed audio, input events, and other host interactions eventually cross the emulator boundary. But each module owns its own state and its own register-level behavior, and each one can usually be understood on its own terms before you know how any of the others work. That's precisely why this book is organized the way it is: one part for CPU cores, one part for devices, one part for the software layers built on top, one part for the frontend and platform-scope extensions.
+
+It's worth knowing, before this book's own address-space walkthrough, why 1 MB and not some rounder number. The 8088 in the original PC had a 20-bit address bus — 1 MB of reach — built around 16-bit internal registers that could only natively address 64 KB, so Intel's architects needed a way to generate a wider address without widening every register. Their answer, segmentation, shifts a 16-bit segment register left 4 bits and adds a 16-bit offset to produce a physical address (Segment × 16 + Offset) — a scheme built into the CPU's silicon, not a software workaround. It wasn't the only option on the table, either: Intel's own account of the design records that an 8-bit shift, yielding a 24-bit, 16 MB address space, was seriously considered and rejected — not for being too complex (it's the identical mechanism with one constant changed), but because it would have forced every segment to start on a 256-byte boundary, fragmenting memory badly; because it needed four more pins than the chip had available; and because 1 MB was judged sufficient anyway. That 20-bit ceiling — and the shift-by-4 arithmetic used to reach it — is why DOSBox-X's memory subsystem below has to do real work just to answer "what's at this address," instead of treating memory as a flat byte array.
+
+Given that history, memory deserves a specific callout here, because it does not fit the diagram above as neatly as the other subsystems do. Most hardware modules own a relatively self-contained piece of state: VGA owns its registers, display state, and video memory; the PIT owns its counters and timing state; the PIC owns interrupt-controller state. Memory is different. It is the shared address space through which the CPU reaches not only ordinary RAM, but also ROMs, device memory, and other regions whose behaviour is implemented by different parts of the emulator.
+
+DOSBox-X handles this by separating the *address space* from the *behaviour behind an address*. The address space is divided into fixed-size pages, and components register `PageHandler` implementations for the ranges where they need to provide custom behaviour (`MEM_RegisterHandler()`, `include/paging.h`). A memory access from the CPU core is therefore not automatically a read or write to a byte array; it is first resolved to the handler responsible for that address range. The same idea appears again in the I/O port subsystem described in @section(dosbox-x-architecture/how-modules-talk-to-each-other): an access is routed to the component that registered responsibility for that location.
+
+This does not mean that all memory is equivalent. Real hardware distinguishes between system RAM, ROM, and device memory, and DOSBox-X preserves those differences. A `RAMPageHandler`, a VGA framebuffer handler, and an EMS page-frame handler all participate in the same dispatch mechanism, but they implement different behaviours. A read from RAM simply returns stored data; a read from a device-backed region may have side effects, timing implications, or hardware-specific semantics — just as it would on a physical machine.
+
+Memory therefore sits at the architectural centre of DOSBox-X, not because it is just another module alongside VGA, the PIT, or the PIC, but because every CPU-visible component ultimately appears somewhere within the address space. It is the shared interface through which many other modules become visible to the guest system. The details of how DOSBox-X translates addresses, manages pages, and models the x86 memory system are covered separately in @chapter(memory-model-and-address-translation); for now, the important point is that memory is the common surface connecting the emulator's otherwise independent components.
+
+## 2.4 How Modules Talk to Each Other {#how-modules-talk-to-each-other}
+
+If every module owned its state privately and never touched anyone else's, there would be nothing to emulate — a PC's hardware exists specifically to interact: the CPU issues I/O port commands that a sound card responds to; a PIT channel's output raises a PIC interrupt line the CPU eventually has to service; the DOS kernel's file I/O calls end up touching a disk image byte range that a storage-controller module manages. DOSBox-X's modules communicate through a small number of well-defined mechanisms, and knowing what these are up front will save you from having to rediscover them independently in every later chapter.
+
+It helps to sort those mechanisms into two families before looking at any of them individually, because the distinction explains *why* there are several mechanisms instead of one. Some communication is **CPU-initiated** — the CPU wants something from a device right now, executes an instruction that reaches out, and gets an answer or causes an effect immediately, on its own schedule. Direct function calls, memory-mapped handler dispatch, and I/O port trapping are all this kind: the CPU is most commonly the one that starts the conversation, though as the next paragraph notes, "CPU-initiated" isn't quite the same claim as "CPU-only." Other communication is **device-initiated** — something happens on a device's own timeline, with no guarantee the CPU is even looking, and the device has to actively get the CPU's attention rather than wait to be asked. Interrupts and callbacks exist because CPU-initiated mechanisms structurally can't handle this case: a sound card finishing a DMA transfer, or a keystroke arriving, happens whenever it happens, not whenever the CPU next happens to check. Every mechanism below falls cleanly into one bucket or the other, and knowing which bucket you're looking at is usually enough to guess *why* DOSBox-X reaches for it in a given situation, well before you've read the implementation. (DMA is a notable exception to this neat split, as a device can become a bus master and initiate memory transfers without a CPU instruction driving each individual access—we cover DMA separately in its dedicated chapter.)
+
+That push/pull split isn't the only useful way to slice these five, though, and it's worth flagging a second axis so the two don't get conflated. Memory-mapped dispatch, I/O port trapping, and interrupts all have a real counterpart on an actual PC — a chip really does own an address range, a real port, or a wire into the 8259. Direct function calls and callbacks don't; they're software-only techniques DOSBox-X needs because it's implemented in C++ rather than silicon, not additional buses the real machine has that the emulator is modeling. The table at the end of this section makes that explicit in its "real-hardware analog" column. It matters for the same reason the push/pull split does: three of these five mechanisms are architecture in the sense of "this is what the real bus does and DOSBox-X mirrors it," and two are architecture only in the looser sense of "this is how the mirroring gets implemented in software" — a callback slot isn't a hardware primitive any more than a C++ function call is.
+
+**Direct function calls.** The most common and least remarkable mechanism: one module simply calls into another's public interface, at the C++ level, when there's no reason to indirect through anything more elaborate. The CPU core's memory reads and writes (@chapter(memory-model-and-address-translation, short)) are the paradigm case during emulation proper — `mem_readb_inline()` and friends aren't dispatched through any registration table at the call site; they're ordinary function calls that internally decide whether to hit a fast path or a device-backed handler. The CPU isn't the only initiator of direct calls, though: modules also call one another directly outside the hot emulation path — during startup and shutdown, when a configuration section is parsed, or when the frontend asks VGA to hand over a frame to render. Those calls follow the same "just call the function" pattern; they're simply not driven by a guest instruction.
+
+**Memory-mapped handler dispatch.** @chapter(memory-model-and-address-translation, short) covers this in depth, but the shape of it belongs here too: any address range can have a `PageHandler` registered against it, so a memory access that looks, from the CPU core's point of view, like an ordinary read or write can transparently belong to VGA's framebuffer, an EMS page frame, or a BIOS ROM shadow instead of plain RAM.
+
+**I/O port trapping.** x86's `IN`/`OUT` instructions address a separate 64 KB I/O space, and DOSBox-X routes every port access through a flat, directly-indexed dispatch table in `src/hardware/iohandler.cpp`:
+
+```cpp
+IO_WriteHandler * io_writehandlers[3][IO_MAX];   // [width][port]
+```
+
+with `IO_MAX` defined as `64*1024+3` — one slot per possible port number, for each of the three access widths (byte, word, dword). This is worth noticing precisely because it's the same design instinct you'll meet again, in a more elaborate form, when @chapter(memory-model-and-address-translation, short) covers the memory subsystem's TLB: rather than searching or hashing to find the right handler for a given port, DOSBox-X just allocates a flat array big enough to index directly and pays a small, fixed memory cost up front in exchange for O(1) dispatch on every access. A module that owns a device — the Sound Blaster code, say, claiming port `0x220` and its neighbors — calls `IO_RegisterWriteHandler()` once, at initialization, to install its handler into that table; from then on, any guest program's `OUT 0x220, AL` reaches that handler directly; no other module needs to know the Sound Blaster code exists.
+
+It's worth pausing on a question this naturally raises: memory-mapped dispatch and I/O port trapping look, mechanically, almost identical — both are flat, directly-indexed tables that route a CPU-initiated access to a registered handler. So why does DOSBox-X bother with two separate mechanisms instead of picking one and using it everywhere? The answer isn't a software-design preference — it's that real x86 hardware genuinely has two separate address spaces, and DOSBox-X has no choice but to model both if it wants guest software to behave correctly. Memory addresses and I/O port addresses live in separate *address spaces* on a real x86 system, selected by different bus control signals rather than entirely separate physical buses: a `MOV` instruction addressing memory and an `OUT` instruction addressing a port can use the *same numeric value* and reach two completely different pieces of hardware, because a dedicated control line tells the rest of the system which space is meant. This is @section(dosbox-x-architecture/one-machine-many-devices)'s shared bus made concrete: the CPU isn't choosing between two software abstractions when it executes `OUT 0x3C8, AL` versus a write to address `0x3C8` — those are different electrical events on a real machine, and an emulator faithful to that machine has to keep them just as separate as the hardware does, right down to needing two independent dispatch tables rather than one shared one.
+
+**Interrupts.** In the original PC/AT architecture, a device asserts a request line into the 8259 PIC, which arbitrates and signals the CPU; DOSBox-X mirrors this with `PIC_ActivateIRQ()` and an event queue the scheduler drains (@chapter(main-loop-and-event-scheduler, short) covers the full mechanism). This is how a PIT tick becomes a timer interrupt the DOS kernel's clock services rely on, and how a completed disk or serial transfer gets the CPU's attention without the CPU having had to poll for it. The device-asserts-a-line picture is the common case, but not the only source feeding that same queue — some of DOSBox-X's own internal scheduling events are raised in software, with no device or physical IRQ line behind them at all, and land on the CPU through the identical `PIC_ActivateIRQ()` path.
+
+**Callbacks.** Real DOS software invokes BIOS and DOS services through software interrupts (`INT 21h` and friends)—but under emulation, those "interrupts" ultimately need to run C++ code, not just jump to more emulated x86 instructions. DOSBox-X bridges this with a callback mechanism (`include/callback.h`): a fixed-size table of handler slots,
+
+```cpp
+typedef Bitu (*CallBack_Handler)(void);
+extern CallBack_Handler CallBack_Handlers[];
+#define CB_MAX 128U
+```
+
+Each slot corresponds to a small stub placed in emulated memory that, when executed, signals the CPU core to stop interpreting guest instructions and instead invoke a specific C++ function. DOSBox-X does not replace *every* DOS service with a callback; the DOS kernel is partly emulated in C++ and uses callbacks for specific transitions where guest execution must leave the emulated x86 environment. `INT 21h` services, BIOS services, and internal emulator facilities are examples of areas where this mechanism is used. The same `include/callback.h` machinery is also what lets DOSBox-X's built-in shell and its debugger hand control to host code.
+
+Mechanically, callbacks are "software implementation glue" rather than a modeled hardware primitive—unlike memory-mapped I/O or interrupts, there is no real-hardware analog for a callback slot. They exist because DOSBox-X is written in C++ and needs a clean way to transition from emulating x86 instructions to executing host code and back.
+
+A sketch of that I/O path end to end, tying the mechanisms above together: a guest program executes `OUT 0x3C8, AL` to begin a VGA palette write. The CPU core, decoding that instruction, calls the port-write dispatch function; the flat `io_writehandlers` table routes port `0x3C8` to VGA's registered handler; that handler updates the palette register directly and marks the affected screen region for the renderer to pick up on its next pass. No other module is involved, and no module needed advance knowledge of any other — the CPU core doesn't know it's talking to VGA specifically, and VGA doesn't know or care which CPU core executed the `OUT`.
+
+The five mechanisms, side by side:
+
+| Mechanism | Who initiates | Real-hardware analog | Example |
+|---|---|---|---|
+| Direct function call | CPU (internally) | — (a software-only convenience; real chips have no equivalent) | CPU core calling `mem_readb_inline()` |
+| Memory-mapped handler dispatch | CPU | Memory bus + address decoding | Write to VGA framebuffer at `0xA000:xxxx` |
+| I/O port trapping | CPU | Separate I/O address space + control signal | `OUT 0x220, AL` reaching Sound Blaster |
+| Interrupts | Device | A dedicated interrupt request line into the 8259 | PIT tick raising IRQ0 |
+| Callbacks | Guest software | — (a software-only bridge; needed because C++ has to run where real hardware would just fetch the next instruction) | `INT 21h` invoking a DOS service |
+
+As one memorable shape for that table, everything above ultimately routes to or from the CPU:
+
+```text
+                           CPU
+
+              +--------------------------+
+              | Direct function calls    |
+              | Memory-mapped dispatch   |
+              | I/O port trapping        |
+              +--------------------------+
+                   |                ^
+                   v                |
+              Device modules (VGA, sound, PIC, PIT, DMA, ...)
+                   |                ^
+                   v                |
+              +--------------------------+
+              | Interrupts               |
+              | Callbacks                |
+              +--------------------------+
+
+                           CPU
+```
+
+The top box is the CPU reaching out on its own schedule; the bottom box is a device or a guest program reaching back in on theirs. Both boxes terminate at the same CPU — it's the direction of the first move that differs.
+
+## 2.5 Configuration as Its Own Layer {#configuration-as-its-own-layer}
+
+So far, everything in this chapter has been about runtime communication — how modules reach each other once emulation is already under way. Every module also participates in a second system that runs before any of that starts: configuration. Which CPU core to use, how much emulated memory to provide, which sound card to emulate and at which I/O address — all of it needs to be decided before the first guest instruction executes, and DOSBox-X handles this uniformly rather than letting each module invent its own settings mechanism. Configuration is organized into named **sections**, each one a `Section_prop` object holding a list of typed properties, registered once at startup (`src/misc/setup.cpp`) via calls like:
+
+```cpp
+secprop = control->AddSection_prop("cpu", &Null_Init, true);
+Pstring = secprop->Add_string("core", Property::Changeable::WhenIdle, "auto");
+Pstring->Set_values(cores);
+```
+
+This is the actual source behind the familiar `[cpu]` section in `dosbox-x.conf`:
+
+```ini
+[cpu]
+core=auto
+cputype=auto
+cycles=auto
+```
+
+— `core=auto`, exactly as declared above, defaulting to `"auto"` and constrained to a fixed set of legal values (`auto`, `normal`, `dynamic`, `simple`, among others) that the property itself enforces. Every other module you'll meet in this book — VGA's `[sdl]`/`[render]` settings, the sound subsystem's card selection, the DOS kernel's drive-mounting behavior — registers its own section the same way, at its own point in `src/dosbox.cpp` or the relevant subsystem's initialization routine. Settings are resolved with a clear priority order — command-line arguments override the configuration file, which overrides each property's own built-in default — and because each property records its own legal range and default, a section can validate its own configuration without any other part of the emulator needing to know what a legal value looks like. (Some settings are also modifiable at runtime—the core marks these as Changeable in the property definitions—and those changes take effect immediately without requiring a restart.)
+
+This matters architecturally for the same reason the I/O and memory dispatch tables do: it's another place where DOSBox-X deliberately keeps modules from needing to know about each other's internals. The CPU module doesn't parse `dosbox-x.conf` itself and doesn't know how VGA's configuration is structured; it registers a `[cpu]` section with the properties it cares about and lets the shared `Config`/`Section_prop` machinery handle parsing, defaults, and validation uniformly across every module in the emulator.
+
+This book will introduce individual settings as they become relevant, in whichever chapter explains the subsystem that reads them — that's a more useful way to learn what a setting does than a dry list divorced from the code that consumes it. But a dry list still has its place as something to search later, so every setting mentioned anywhere in this book is also collected, with its default and legal values, in @chapter(appendix-d-configuration-reference, short).
+
+The frontend layer sits outside this modular architecture. Where @section(dosbox-x-architecture/one-machine-many-devices) through @section(dosbox-x-architecture/configuration-as-its-own-layer) covered the CPU, memory, device modules and their communication mechanisms, the frontend is the one piece that's genuinely platform-specific — window management, input capture, audio/video presentation, all built on SDL. It is a presentation and host-interaction layer, consuming finished backend output (rendered frames, mixed audio) and generating translated input (keystrokes, mouse deltas), while also managing window events and host timing. It does not participate in any emulation logic. That boundary — and the SDL1/SDL2 compatibility decisions, presentation backends, and input translation details — receives full coverage in Part V, @chapter(host-abstraction-sdl, short): Host Abstraction via SDL.
+
+## 2.6 Why Start Here {#why-start-here}
+
+None of this chapter's content is deep in the way the chapters immediately following it will be — there's no scheduler to trace yet, no page table to walk, no opcode to decode, no dynamic recompiler generating host machine code on the fly. That's deliberate, and it's worth naming the boundary explicitly: this chapter has been entirely about *who owns what*, never about *when anything happens*. Every mechanism above — a `PageHandler` claiming an address range, a device registering an I/O handler, a callback slot waiting for an `INT 21h` — describes a standing relationship between modules, not a sequence of events in time. Timing, scheduling, and execution order are a different question, deliberately postponed rather than overlooked.
+
+Before any of those deep dives make sense, it helps to already know that the CPU core you're about to watch fetch and decode instructions is one module among several peers, not the center of a hub-and-spoke design; that its memory accesses might quietly belong to a device rather than RAM, by design, not by accident; that an `OUT` instruction reaching a sound card and an `INT 21h` reaching a DOS service handler are two instances of the same general pattern — one module registering itself into a shared dispatch mechanism so that another module can reach it without knowing it exists. Now that we know the pieces and who owns what, the natural next question is how time moves through them.
+
+With that map in hand, @chapter(time-in-dosbox-x, short) first establishes how DOSBox-X measures time at all — a prerequisite the scheduler depends on. @chapter(main-loop-and-event-scheduler, short) then opens `src/gui/sdlmain.cpp`, finds `main()`, and starts following execution downward — into the scheduler that decides, instant by instant, which of this chapter's modules gets to run next.
+
+---
+
+*Next: @chapter(time-in-dosbox-x, short) — Time in DOSBox-X, which establishes how DOSBox-X measures guest time and reconciles it against host wall-clock time — the prerequisite the main-loop scheduler in the chapter after depends on.*

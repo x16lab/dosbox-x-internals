@@ -1,0 +1,248 @@
+<svg viewBox="0 0 900 920" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-hl-bg: #dbeafe;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #374151;
+            --offset-label: #374151;
+            --segment-label: #1d4ed8;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --rose-bg: #fff1f2;
+            --rose-border: #f43f5e;
+            --rose-label: #be123c;
+            --rose-code: #881337;
+            --rose-note: #4b5563;
+
+            --amber-bg: #fffbeb;
+            --amber-border: #f59e0b;
+            --amber-label: #b45309;
+            --amber-code: #78350f;
+            --amber-note: #4b5563;
+
+            --teal-bg: #f0fdfa;
+            --teal-border: #14b8a6;
+            --teal-label: #0f766e;
+            --teal-code: #134e4a;
+            --teal-note: #4b5563;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-hl-bg: #1e3a5f;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #e5e7eb;
+            --offset-label: #e5e7eb;
+            --segment-label: #60a5fa;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --rose-bg: #4c1120;
+            --rose-border: #fb7185;
+            --rose-label: #fda4af;
+            --rose-code: #ffe4e6;
+            --rose-note: #9ca3af;
+
+            --amber-bg: #451a03;
+            --amber-border: #fbbf24;
+            --amber-label: #fcd34d;
+            --amber-code: #fef3c7;
+            --amber-note: #9ca3af;
+
+            --teal-bg: #0f3330;
+            --teal-border: #2dd4bf;
+            --teal-label: #5eead4;
+            --teal-code: #ccfbf1;
+            --teal-note: #9ca3af;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="450" y="34" text-anchor="middle" font-size="19" font-weight="700" fill="var(--fg-title)">Sound Blaster DSP command dispatch — DSP_DoCommand()</text>
+    <text x="450" y="54" text-anchor="middle" font-size="12.5" fill="var(--fg-subtitle)">key paths through the command switch: direct DAC, single-cycle DMA, auto-init DMA, and ADPCM</text>
+
+    <!-- Switch entry -->
+    <rect x="40" y="76" width="820" height="110" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="60" y="100" font-size="12" font-weight="700" fill="var(--indigo-label)">ENTRY — DSP_DoCommand() switch (cmd)</text>
+    <text x="60" y="126" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--indigo-code)">switch (sb.dsp.cmd) { ... }</text>
+    <text x="60" y="150" font-size="11.5" fill="var(--indigo-note)">ESS-compatible cards intercept 0xA0–0xCF before this switch even runs</text>
+    <text x="60" y="168" font-size="11.5" fill="var(--indigo-note)">(handled earlier in the function — a fifth path this diagram doesn't cover)</text>
+
+    <!-- Fan-out connectors: straight drop from entry, horizontal trunk at y=208 (clear of the ESS note text above and box tops below), straight drop into each box -->
+    <line x1="450" y1="186" x2="450" y2="208" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="137.5" y1="208" x2="767.5" y2="208" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="137.5" y1="208" x2="137.5" y2="230" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="347.5" y1="208" x2="347.5" y2="230" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="557.5" y1="208" x2="557.5" y2="230" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="767.5" y1="208" x2="767.5" y2="230" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Box 1: Direct DAC -->
+    <rect x="40" y="230" width="195" height="230" rx="10" fill="var(--rose-bg)" stroke="var(--rose-border)" stroke-width="1.5"/>
+    <text x="55" y="252" font-size="10.5" font-weight="700" fill="var(--rose-label)">0x10 — Direct DAC</text>
+    <text x="55" y="278" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--rose-code)">case 0x10:</text>
+    <text x="55" y="292" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--rose-code)">  DSP_ChangeMode(MODE_DAC);</text>
+    <text x="55" y="306" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--rose-code)">  dac.data[used++] = ...;</text>
+    <text x="55" y="330" font-size="9" fill="var(--rose-note)">no DMA, no IRQ — byte is</text>
+    <text x="55" y="343" font-size="9" fill="var(--rose-note)">written straight into the</text>
+    <text x="55" y="356" font-size="9" fill="var(--rose-note)">DAC ring buffer; timing is</text>
+    <text x="55" y="369" font-size="9" fill="var(--rose-note)">up to the caller (PIT/IRQ0)</text>
+
+    <!-- Box 2: Single-Cycle DMA -->
+    <rect x="250" y="230" width="195" height="230" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="265" y="252" font-size="10.5" font-weight="700" fill="var(--green-label)">0x14 — Single-Cycle DMA</text>
+    <text x="265" y="278" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--green-code)">case 0x14: case 0x15:</text>
+    <text x="265" y="292" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--green-code)">case 0x91:</text>
+    <text x="265" y="306" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--green-code)">  DSP_PrepareDMA_Old(</text>
+    <text x="265" y="320" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--green-code)">   DSP_DMA_8,false,</text>
+    <text x="265" y="334" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--green-code)">   false,hispeed);</text>
+    <text x="265" y="358" font-size="9" fill="var(--green-note)">one DMA block, one IRQ</text>
+    <text x="265" y="371" font-size="9" fill="var(--green-note)">at the end — 0x15/0x91 are</text>
+    <text x="265" y="384" font-size="9" fill="var(--green-note)">aliases for the same path</text>
+
+    <!-- Box 3: Auto-Init DMA -->
+    <rect x="460" y="230" width="195" height="230" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="475" y="252" font-size="10.5" font-weight="700" fill="var(--orange-label)">0x1C — Auto-Init DMA</text>
+    <text x="475" y="278" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-code)">case 0x1C: case 0x90:</text>
+    <text x="475" y="292" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-code)">  DSP_SB2_ABOVE;</text>
+    <text x="475" y="306" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-code)">  DSP_PrepareDMA_Old(</text>
+    <text x="475" y="320" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-code)">   DSP_DMA_8,true,</text>
+    <text x="475" y="334" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-code)">   false,hispeed);</text>
+    <text x="475" y="358" font-size="9" fill="var(--orange-code)">SB2+ only — DMA re-arms</text>
+    <text x="475" y="371" font-size="9" fill="var(--orange-code)">itself after each block;</text>
+    <text x="475" y="384" font-size="9" fill="var(--orange-code)">IRQs continue until 0xD0</text>
+    <text x="475" y="397" font-size="9" fill="var(--orange-code)">/0xDA halts it</text>
+
+    <!-- Box 4: Auto-Init ADPCM -->
+    <rect x="670" y="230" width="195" height="230" rx="10" fill="var(--amber-bg)" stroke="var(--amber-border)" stroke-width="1.5"/>
+    <text x="685" y="252" font-size="10.5" font-weight="700" fill="var(--amber-label)">0x1F — Auto-Init ADPCM</text>
+    <text x="685" y="278" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--amber-code)">case 0x1F:</text>
+    <text x="685" y="292" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--amber-code)">  DSP_SB2_ABOVE;</text>
+    <text x="685" y="306" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--amber-code)">  adpcm.haveref = true;</text>
+    <text x="685" y="320" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--amber-code)">  DSP_PrepareDMA_Old(</text>
+    <text x="685" y="334" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--amber-code)">   DSP_DMA_2,true,</text>
+    <text x="685" y="348" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--amber-code)">   false,false);</text>
+    <text x="685" y="368" font-size="9" fill="var(--amber-note)">haveref=true — next byte</text>
+    <text x="685" y="381" font-size="9" fill="var(--amber-note)">is a reference sample, not</text>
+    <text x="685" y="394" font-size="9" fill="var(--amber-note)">compressed data</text>
+
+    <!-- Converging connectors: straight drop from each box, horizontal trunk at y=483 (clear of both box notes and the shared back-end title), straight drop into the shared box -->
+    <line x1="137.5" y1="460" x2="137.5" y2="483" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="347.5" y1="460" x2="347.5" y2="483" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="557.5" y1="460" x2="557.5" y2="483" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="767.5" y1="460" x2="767.5" y2="483" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="137.5" y1="483" x2="767.5" y2="483" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="450" y1="483" x2="450" y2="506" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Shared back end -->
+    <rect x="40" y="506" width="820" height="110" rx="10" fill="var(--teal-bg)" stroke="var(--teal-border)" stroke-width="1.5"/>
+    <text x="60" y="530" font-size="12" font-weight="700" fill="var(--teal-label)">SHARED BACK END — every path above ends here</text>
+    <text x="60" y="556" font-family="Consolas, Menlo, monospace" font-size="13" fill="var(--teal-code)">DMA channel arms, plays until the block completes, then raises the card's IRQ</text>
+    <text x="60" y="580" font-size="11" fill="var(--teal-note)">auto-init paths (0x1C/0x1F) re-arm immediately and keep firing IRQs until 0xD0/0xDA (halt);</text>
+    <text x="60" y="596" font-size="11" fill="var(--teal-note)">single-cycle paths (0x14/0x15/0x91) fire exactly one IRQ then idle — 0x10 never touches DMA/IRQ at all</text>
+
+    <!-- Example command boxes -->
+    <rect x="40" y="670" width="195" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="137.5" y="698" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--box-text)">0x40 — Set Rate</text>
+
+    <rect x="250" y="670" width="195" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="347.5" y="698" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--box-text)">0x80 — Silence DAC</text>
+
+    <rect x="460" y="670" width="195" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="557.5" y="698" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--box-text)">0xD0/0xD4 — Pause</text>
+
+    <rect x="670" y="670" width="195" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="767.5" y="698" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--box-text)">0xE1 — Get Version</text>
+
+    <!-- Fanout connectors from shared back-end down to the example boxes: drop, horizontal trunk at y=643, drop into each box -->
+    <line x1="450" y1="616" x2="450" y2="643" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="137.5" y1="643" x2="767.5" y2="643" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="137.5" y1="643" x2="137.5" y2="670" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="347.5" y1="643" x2="347.5" y2="670" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="557.5" y1="643" x2="557.5" y2="670" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="767.5" y1="643" x2="767.5" y2="670" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+
+    <!-- Footer note in a callout rectangle -->
+    <rect x="130" y="744" width="640" height="96" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="450" y="774" text-anchor="middle" font-size="12" fill="var(--indigo-label)" font-weight="600">DSP_DoCommand() has roughly 40 more cases not shown here</text>
+    <text x="450" y="795" text-anchor="middle" font-size="11" fill="var(--indigo-note)">rate, mixer, version, MIDI, pause/continue, and ESS-specific commands all run through this same switch</text>
+    <text x="450" y="815" text-anchor="middle" font-size="10" fill="var(--indigo-note)" font-style="italic">the four boxes above are just representative samples of these omitted cases</text>
+
+    <text x="450" y="868" text-anchor="middle" font-size="10" fill="var(--orange-footnote)" font-style="italic">ESS-compatible cards intercept commands 0xA0–0xCF before any of this runs — a fifth path this diagram omits</text>
+    <text x="450" y="884" text-anchor="middle" font-size="10" fill="var(--orange-footnote)" font-style="italic">(see the ESS_TYPE check at the very top of DSP_DoCommand())</text>
+</svg>

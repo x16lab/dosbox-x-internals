@@ -1,0 +1,182 @@
+<svg viewBox="0 0 900 940" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-hl-bg: #dbeafe;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #374151;
+            --offset-label: #374151;
+            --segment-label: #1d4ed8;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-hl-bg: #1e3a5f;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #e5e7eb;
+            --offset-label: #e5e7eb;
+            --segment-label: #60a5fa;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="450" y="34" text-anchor="middle" font-size="19" font-weight="700" fill="var(--fg-title)">8259 PIC — IRR / IMR / ISR state machine</text>
+    <text x="450" y="54" text-anchor="middle" font-size="12.5" fill="var(--fg-subtitle)">the five reachable states of a single IRQ line, and every transition PIC_runIRQs() can take between them</text>
+
+    <!-- Edge: Idle -> Pending -->
+    <text x="450" y="100" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10" fill="var(--fg-subtitle)">PIC_ActivateIRQ(irq) → sets IRR bit</text>
+    <line x1="340" y1="140" x2="560" y2="140" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Edge: Pending -> Idle -->
+    <line x1="560" y1="175" x2="340" y2="175" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="450" y="222" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10" fill="var(--fg-subtitle)">PIC_DeActivateIRQ(irq) → line deasserted before service</text>
+
+    <!-- Edge: Idle <-> Masked (idle), IMR toggle -->
+    <line x1="240" y1="200" x2="240" y2="430" stroke="var(--arrow)" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="250" y="311" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--fg-subtitle)">PIC_SetIRQMask()</text>
+    <text x="250" y="324" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--fg-subtitle)">toggles IMR bit</text>
+
+    <!-- Edge: Pending <-> Masked (pending), IMR toggle -->
+    <line x1="660" y1="200" x2="660" y2="430" stroke="var(--arrow)" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="670" y="311" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--fg-subtitle)">PIC_SetIRQMask()</text>
+    <text x="670" y="324" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--fg-subtitle)">toggles IMR bit</text>
+
+    <!-- Edge: Masked (pending) -> Masked (idle) -->
+    <text x="450" y="462" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10" fill="var(--fg-subtitle)">PIC_DeActivateIRQ(irq) — deasserted while masked</text>
+    <line x1="560" y1="475" x2="340" y2="475" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Edge: Pending -> Servicing (routed via right margin, enters top of Servicing) -->
+    <path d="M700,200 L700,225 L830,225 L830,690 L460,690 L460,700" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="772" y="440" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">PIC_runIRQs():</text>
+    <text x="772" y="454" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">highest-priority,</text>
+    <text x="772" y="468" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">unmasked IRR bit,</text>
+    <text x="772" y="482" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">no higher ISR bit set</text>
+
+    <!-- Edge: Servicing -> Idle (routed via left margin) -->
+    <path d="M350,745 L40,745 L40,155 L140,155" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="6" y="330" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">EOI (OCW2 write,</text>
+    <text x="6" y="344" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">or auto-EOI) —</text>
+    <text x="6" y="358" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">ISR bit cleared</text>
+
+    <!-- Edge: Servicing self-loop (nested preemption) -->
+    <path d="M570,720 C650,705 650,785 570,770" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="656" y="730" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">higher-priority IRQ</text>
+    <text x="656" y="744" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">preempts (Fully /</text>
+    <text x="656" y="758" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--fg-subtitle)">Specially Fully Nested)</text>
+
+    <!-- State: Idle -->
+    <rect x="140" y="110" width="200" height="90" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="240" y="136" text-anchor="middle" font-size="13" font-weight="700" fill="var(--box-text)">Idle</text>
+    <text x="240" y="160" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--box-text)">IRR=0  IMR=0  ISR=0</text>
+    <text x="240" y="180" text-anchor="middle" font-size="9.5" fill="var(--box-text)">no request, unmasked</text>
+
+    <!-- State: Pending -->
+    <rect x="560" y="110" width="200" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="660" y="136" text-anchor="middle" font-size="13" font-weight="700" fill="var(--indigo-label)">Pending</text>
+    <text x="660" y="160" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--indigo-code)">IRR=1  IMR=0  ISR=0</text>
+    <text x="660" y="180" text-anchor="middle" font-size="9.5" fill="var(--indigo-note)">latched, eligible for dispatch</text>
+
+    <!-- State: Masked (idle) -->
+    <rect x="140" y="430" width="200" height="90" rx="10" fill="var(--box-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="240" y="456" text-anchor="middle" font-size="13" font-weight="700" fill="var(--orange-label)">Masked (idle)</text>
+    <text x="240" y="480" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--box-text)">IRR=0  IMR=1  ISR=0</text>
+    <text x="240" y="500" text-anchor="middle" font-size="9.5" fill="var(--box-text)">no request, line blocked</text>
+
+    <!-- State: Masked (pending) -->
+    <rect x="560" y="430" width="200" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="660" y="456" text-anchor="middle" font-size="13" font-weight="700" fill="var(--orange-label)">Masked (pending)</text>
+    <text x="660" y="480" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--indigo-code)">IRR=1  IMR=1  ISR=0</text>
+    <text x="660" y="500" text-anchor="middle" font-size="9.5" fill="var(--indigo-note)">latched, withheld by IMR</text>
+
+    <!-- State: In Service -->
+    <rect x="350" y="700" width="220" height="90" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="460" y="726" text-anchor="middle" font-size="13" font-weight="700" fill="var(--green-label)">In Service</text>
+    <text x="460" y="750" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--green-code)">IRR=0  IMR=—  ISR=1</text>
+    <text x="460" y="770" text-anchor="middle" font-size="9.5" fill="var(--green-note)">vector delivered, priority level closed</text>
+
+    <!-- Footer -->
+    <line x1="70" y1="818" x2="830" y2="818" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="450" y="844" text-anchor="middle" font-size="12" fill="var(--footer-text)" font-weight="600">Fill = pending/service state · Orange border = IMR bit set (masked)</text>
+    <text x="450" y="864" text-anchor="middle" font-size="11" fill="var(--footer-subtext)">masking is orthogonal to IRR — it can be set or cleared from either Idle or Pending independently</text>
+
+    <text x="450" y="888" text-anchor="middle" font-size="10.5" fill="var(--orange-footnote)" font-style="italic">Rotation modes (rotate_on_auto_eoi) can reorder which line counts as "highest priority" after each EOI</text>
+    <text x="450" y="904" text-anchor="middle" font-size="10.5" fill="var(--orange-footnote)" font-style="italic">— omitted above for focus; the states and transitions shown here are unaffected</text>
+</svg>

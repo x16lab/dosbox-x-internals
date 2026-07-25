@@ -1,0 +1,56 @@
+---
+title: "Introduction"
+description: "Overview of DOSBox-X and the IBM PC emulation landscape — the scope of this book and what it sets out to explain."
+order: 0
+chapterSlug: "introduction"
+part: "foundations"
+---
+# Introduction {#introduction}
+
+DOSBox-X is not just a place to run old software. It is a detailed recreation of a DOS-era machine — one that tries to behave like a real IBM-compatible PC closely enough that games, business applications, development tools, and even other operating systems believe they are running on familiar hardware. That ambition gives the project a somewhat unusual place among emulators. Most emulators exist to make old software *runnable*; DOSBox-X's more demanding goal — modeling register-level device behavior faithfully enough for software that assumes direct hardware access, not just a compatible API — makes it something you can also study as a complete virtual machine, in the way you might study a real PC's architecture rather than just its user manual.
+
+This book is a guided tour of that machine. Rather than treating DOSBox-X as a black box that happens to run `DOOM.EXE`, we're going to open it layer by layer and trace the systems that make it work: the CPU core, memory, timing, interrupts, video, sound, input, storage, DOS services, and the host integration that ties all of it together. The goal isn't to memorize every file in the source tree — a project this size will always outrun anyone's memory of it — but to build a mental model precise enough that, when you open a file you've never seen before, you already have a reasonable guess about where it fits and why it exists in the first place.
+
+## Why This Book Exists {#why-this-book-exists}
+
+@chapter(what-is-dosbox-x) covers the history in full, but the short version is worth stating here too: DOSBox-X began in 2011 as a fork of the original DOSBox project, started by a developer who wanted the emulator to go further than its original, gaming-focused scope ever intended it to. Where DOSBox's founders were, quite reasonably, chasing "does the game run," DOSBox-X's fork chased something closer to "does the machine behave the way the real hardware did" — accuracy and platform scope as goals in their own right, not just means to a gaming end. Over the years since, that shift in priorities pulled in serious DOS application support, far deeper Windows 3.x/9x compatibility, an entire parallel PC-98 hardware target, and a built-in debugger — turning what started as one fork among several into something closer to a confluence point for most of the DOSBox family tree's accuracy-oriented work.
+
+That history is also why this book exists as something other than a README expanded into prose. A project with DOSBox-X's scope and DOSBox-X's motivating ambition rewards being read the way you'd read the source of a real operating system or a serious compiler — as a system with internal logic worth understanding, not just a pile of features to enumerate. If you've ever looked at an emulator and wondered where "the computer" actually lives inside all that code, this book is for you. By the end, DOSBox-X should feel less like a mystery and more like a machine you can trace, reason about, and extend.
+
+## What Kind of Book This Is {#what-kind-of-book-this-is}
+
+This isn't a user manual, and it isn't a line-by-line source commentary either. Every technical chapter in this book is built the same way: open the actual, current DOSBox-X source, find the function or structure that does the thing being discussed, and explain it from there — real file paths, real struct layouts, real code, not paraphrased summaries of what an emulator "probably" does. Where the source teaches a broader lesson about emulator design generally, we'll pull that lesson out explicitly; where it doesn't, we'll stay concrete and let the code speak for itself.
+
+That said, DOSBox-X moves. Function names shift, files get reorganized, whole subsystems occasionally get rewritten. Every code excerpt in this book is anchored to a specific commit, noted at the top of each chapter, precisely so you can tell the difference between "this has changed since the book was written" and "I'm misreading the current source." Treat file and line references as coordinates into a moving target, not permanent addresses — the architecture they illustrate tends to outlive the exact lines it's illustrated with.
+
+## What an Emulated IBM PC Actually Requires {#what-an-emulated-ibm-pc-actually-requires}
+
+DOSBox-X grew out of DOSBox, but it went much further in scope, and that added scope is a genuinely useful lens for understanding the project. Supporting serious DOS application use, DOS-hosted Windows, and even non-Western environments like PC-98 and East Asian DOS variants means DOSBox-X has had to confront nearly every tradeoff an emulator can face: accuracy against speed, faithful register-level modeling against convenient abstraction, broad compatibility against implementation simplicity. A narrower, gaming-only emulator can duck plenty of these tradeoffs by simply not supporting the software that would force the issue. DOSBox-X mostly can't, and the decisions it made instead are what make it worth a book rather than a wiki page.
+
+@chapter(what-is-dosbox-x) makes the historical case for why an accurate DOS emulator has no choice but to become a hardware emulator: DOS itself supplied almost nothing in the way of device abstraction, so software that wanted performance — which was most DOS software worth running — talked straight to the metal: VGA registers, the 8253 PIT, Sound Blaster I/O ports, the 8237 DMA controller. There was no API layer to reimplement instead, the way a POSIX-compatible OS or a JVM could be reimplemented by matching a specification rather than a specific chip's register semantics. The "API," as this book puts it more than once, is the hardware's register map. Everything from @chapter(dosbox-x-architecture) onward is, in one way or another, the consequence of taking that fact seriously.
+
+## How This Book Is Organized {#how-this-book-is-organized}
+
+The chapters ahead move from the outside in, then from the bottom up.
+
+**Part I — Foundations** starts with history and architecture before touching a single line of emulation logic. @chapter(what-is-dosbox-x) covers where DOSBox-X came from and why; @chapter(dosbox-x-architecture) maps out its modular structure — the major components and the handful of mechanisms (direct calls, memory handler dispatch, I/O port trapping, interrupts, callbacks) that let them talk to each other without knowing much about one another's internals. @chapter(main-loop-and-event-scheduler) opens the actual source tree for the first time, tracing execution from `main()` down into the event scheduler that decides, at every instant, what runs next. @chapter(memory-model-and-address-translation) covers the memory model — segmentation, paging, the TLB, and the page-handler mechanism that lets an ordinary memory write quietly belong to a device instead of RAM.
+
+**Part II — The CPU** covers both of DOSBox-X's central execution strategies and the interrupt/exception machinery that both have to honor identically. @chapter(interpreter-core) walks through the interpreter core's fetch/decode/execute loop, including its lazy-flags trick for deferring flag computation until something actually asks. @chapter(dynamic-recompilation) covers dynamic recompilation — translating guest instructions into host machine code once and running the compiled result many times — and the self-modifying-code detection that has to watch over that bet. @chapter(interrupts-exceptions-pic) follows a hardware interrupt from the 8259 PIC through to the guest handler it invokes.
+
+**Part III — Devices** works through VGA/SVGA, the DMA controller and PIT, sound hardware (Sound Blaster, Gravis UltraSound, MIDI), and serial/parallel peripherals — the actual chips @chapter(what-is-dosbox-x) introduced historically, now covered at the register level DOS software always assumed it could reach.
+
+**Part IV — Software Layers** covers what sits on top of that hardware: the BIOS services DOS itself depends on, the DOS kernel's file system and process model (and its `INT 21h` dispatch, likely the single most-read interrupt table in the whole emulator), and the timing and cycle-management settings that determine how faithfully — and how fast — all of the above actually runs.
+
+**Part V — Host Integration and Extensions** steps back out to the frontend: SDL's role as the one deliberately platform-specific layer, and the extensions — PC-98 support, Windows 9x compatibility, the integrated debugger — that distinguish DOSBox-X most clearly from the project it forked from.
+
+A short set of appendices closes the book: a glossary for readers coming from a more modern systems background, a comparison of DOSBox-X's design philosophy against sibling projects like QEMU, 86Box, and PCem, and an annotated map from source file to subsystem to chapter, for anyone using this book as a reference after the first read-through.
+
+## Who This Book Is For {#who-this-book-is-for}
+
+You don't need DOS-era hardware experience to follow this book, but you'll get more out of it if you're comfortable reading C++ and you're willing to sit with source code rather than skim past it — every chapter expects you to look at real functions, not just take the prose's word for what they do. If you're coming to this with an interest in retrocomputing, reverse engineering, compiler or OS internals, or just curiosity about how a piece of software this old manages to keep running on hardware that shares almost nothing with what it was written for, you're in the right place. It's also worth saying plainly that DOSBox-X's use today extends well past gaming nostalgia: digital preservation, DOS-era binary reverse engineering, and operating-system research all lean on exactly the kind of register-level fidelity this book spends most of its time explaining — the sort of thing a serious reverse-engineering project eventually runs into and needs to understand from the emulator's side, not just the target binary's.
+
+If you've ever wondered where "the computer" lives inside an emulator's source tree, turn the page. @chapter(what-is-dosbox-x) starts, appropriately enough, decades before any of this code was written.
+
+---
+
+*Next: @chapter(what-is-dosbox-x), where the story starts with the IBM PC itself.*

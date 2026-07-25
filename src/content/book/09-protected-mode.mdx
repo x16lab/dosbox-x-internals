@@ -1,0 +1,245 @@
+---
+title: "Protected Mode: Descriptors, Task Switching, and DPMI"
+description: "The protected-mode machinery Chapter 8 left unopened: the GDT/LDT and the Descriptor class that decodes them, full gate dispatch inside CPU_Interrupt() (call/interrupt/trap/task gates, CPL/DPL privilege checks), hardware task switching via the TSS (including the CR3 reload that makes it a real address-space switch), the I/O permission bitmap, and why DOSBox-X has no native DPMI implementation at all — CWSDPMI runs as an ordinary guest program against everything this chapter builds."
+order: 9
+chapterSlug: "protected-mode"
+---
+# Chapter 9: Protected Mode: Descriptors, Task Switching, and DPMI
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 9.0 The Branch Chapter 8 Left Closed
+
+Chapter 8 quoted `CPU_Interrupt()`'s real-mode branch in full — three pushes, a flag clear, an IVT lookup — and then said, of the protected-mode branch sitting right beside it, only that it "contains considerably more code" and moved on. That wasn't a simplification for pacing; it was a decision to keep Chapter 8 about *delivery* — the fact that a hardware IRQ, a software `INT`, and a CPU exception all converge on one function — without also making it a chapter about *privilege*. This chapter is that second chapter.
+
+Everything here is reachable only when `cpu.pmode` is true — a `CR0.PE` write, the same one Chapter 16 caught mid-flight to explain why `cycles=auto` switches into continuous adjustment the moment a guest enters protected mode. Real-mode DOS software never touches any of it. Windows 3.x's 386 Enhanced Mode, Windows 9x, OS/2, and every DOS extender behind a game that "needs 32-bit protected mode" all live entirely inside what follows.
+
+## 9.1 The GDT, the LDT, and What a Descriptor Actually Is
+
+A segment register in real mode is just a number, shifted left four bits by `CPU_Interrupt()`'s real-mode branch, as Chapter 8 showed. In protected mode, a segment register is a *selector* — an index into a table of descriptors, each one a small structure describing where a segment actually lives, how big it is, and who's allowed to use it. DOSBox-X models that structure directly:
+
+```cpp
+class Descriptor {
+public:
+    LinearPt GetBase(void) const {
+        if (CPU_ArchitectureType >= CPU_ARCHTYPE_386) {
+            return (LinearPt)(
+                ((LinearPt)saved.seg.base_24_31 << 24U) |
+                ((LinearPt)saved.seg.base_16_23 << 16U) |
+                (LinearPt)saved.seg.base_0_15);
+        } else {
+            return (LinearPt)(
+                ((LinearPt)saved.seg.base_16_23 << 16U) |
+                (LinearPt)saved.seg.base_0_15);
+        }
+    }
+    Bitu GetLimit(void) const {
+        const Bitu limit = ((Bitu)saved.seg.limit_16_19 << 16U) | (Bitu)saved.seg.limit_0_15;
+        if (saved.seg.g && CPU_ArchitectureType >= CPU_ARCHTYPE_386)
+            return ((Bitu)limit << 12U) | 0xFFFU;
+        return limit;
+    }
+    Bitu DPL(void) const { return saved.seg.dpl; }
+    Bitu Conforming(void) const { return saved.seg.type & 8U; }
+    Bitu Big(void) const { return saved.seg.big; }
+    ...
+public:
+    union {
+        S_Descriptor seg;
+        G_Descriptor gate;
+        uint32_t fill[2];
+    } saved;
+};
+```
+
+That's an ordinary 386 segment descriptor, decoded field for field: `GetBase()` reassembles the base address from three separate byte ranges scattered across the descriptor's eight bytes — an Intel design choice inherited from extending the 286's 24-bit descriptor without breaking its layout — and `GetLimit()` handles the granularity bit, turning a 20-bit limit into a full 4GB range in 4KB steps when `g` is set. The same union also reinterprets the identical eight bytes as a *gate* (`G_Descriptor`) rather than a segment — §9.2 is where that second interpretation matters.
+
+Two tables hold these descriptors. The **GDT** (Global Descriptor Table) is shared machine-wide; the **LDT** (Local Descriptor Table) is per-task, and which one a given selector refers to is decided by a single bit DOSBox-X checks on every lookup:
+
+```cpp
+class GDTDescriptorTable : public DescriptorTable {
+public:
+    bool GetDescriptor(Bitu selector, Descriptor& desc) {
+        Bitu address = selector & ~7U;
+        if (selector & 4U) {
+            if (address >= ldt_limit) return false;
+            desc.Load((LinearPt)(ldt_base + address));
+            return true;
+        } else {
+            if (address >= table_limit) return false;
+            desc.Load((LinearPt)(table_base + address));
+            return true;
+        }
+    }
+    ...
+};
+```
+
+Bit 2 of a selector (`selector & 4U`) is the TI (Table Indicator) bit — clear for the GDT, set for the LDT — and the bottom two bits are the requested privilege level (RPL), masked off by `& ~7U` before the lookup. Notice that `GDTDescriptorTable` carries the LDT's base and limit as its own fields rather than delegating to a separate class instance — the LDT, in this implementation, is a property of the GDT lookup path, not a sibling table with its own object. `desc.Load()` — inherited from the plain `Descriptor` class — reads those eight bytes the same way any other guest memory read does: through the TLB and `PageHandler` machinery Chapter 5 built, with no special-casing for "this happens to be a descriptor" anywhere in the read path. A descriptor table is, from the memory system's point of view, just data sitting in RAM like anything else — which is also exactly why it's vulnerable to being modified out from under a running task, a fact §9.3 leans on.
+
+## 9.2 Four Kinds of Gate, One Dispatch
+
+Chapter 8 showed `CPU_Interrupt()`'s IDT lookup landing on a `Descriptor gate` and then declared the protected-mode branch out of scope. Here's what it actually does with that descriptor once it has it — and the answer is a privilege check followed by a `switch` on four distinct gate types, all reached through the identical entry point every hardware IRQ, software `INT`, and CPU exception already funnels through:
+
+```cpp
+Descriptor gate;
+if (!cpu.idt.GetDescriptor(num<<3, gate)) {
+    CPU_Exception(EXCEPTION_GP, num*8+2+((type&CPU_INT_SOFTWARE)?0:1));
+    return;
+}
+if ((type&CPU_INT_SOFTWARE) && (gate.DPL()<cpu.cpl)) {
+    CPU_Exception(EXCEPTION_GP, num*8+2);
+    return;
+}
+...
+switch (gate.Type()) {
+case DESC_286_INT_GATE:  case DESC_386_INT_GATE:
+case DESC_286_TRAP_GATE: case DESC_386_TRAP_GATE:
+    { ... }
+case DESC_TASK_GATE:
+    CPU_CHECK_COND(!gate.saved.seg.p, "INT:Gate segment not present",
+        EXCEPTION_NP, num*8+2+((type&CPU_INT_SOFTWARE)?0:1))
+    CPU_SwitchTask(gate.GetSelector(), TSwitch_CALL_INT, oldeip);
+    ...
+    return;
+default:
+    E_Exit("Illegal descriptor type %X for int %X", (int)gate.Type(), (int)num);
+}
+```
+
+The privilege check right at the top is worth pausing on, because it's the entire reason `int 21h` can't be called from arbitrary ring-3 code against an arbitrary IDT entry: `gate.DPL() < cpu.cpl` — the gate's own descriptor privilege level being *lower* than the caller's current privilege — is a `#GP` fault, and it only applies when the interrupt arrived as `CPU_INT_SOFTWARE`. A hardware IRQ or a CPU-detected exception bypasses this check entirely, because neither of those originates from code that could be attacking the privilege boundary in the first place — only a deliberate `INT` instruction can.
+
+**Interrupt and trap gates** (`DESC_286_INT_GATE`/`DESC_386_INT_GATE`/`DESC_286_TRAP_GATE`/`DESC_386_TRAP_GATE` — differing only in whether `IF` gets cleared on entry, and in whether the gate's target descriptor is 16-bit or 32-bit) are the common case: they point at an ordinary code segment, and delivery is a fancier version of Chapter 8's real-mode push sequence — `EFLAGS`, `CS`, `EIP`, and optionally an error code, pushed onto whichever stack is appropriate for the resulting privilege level. That "whichever stack" is where the TSS shows up even without a full task switch: raising privilege (`cs_dpl < cpu.cpl`, an interrupt landing on more-privileged code than the code that triggered it) means the *old* stack isn't safe to keep using, so DOSBox-X asks the current task's TSS for a fresh one:
+
+```cpp
+cpu_tss.Get_SSx_ESPx(cs_dpl, n_ss, n_esp);
+```
+
+Every TSS carries a table of `SS0:ESP0`, `SS1:ESP1`, `SS2:ESP2` — one stack per privilege level below the current one — precisely so that a ring-3 interrupt landing on ring-0 code has somewhere trustworthy to push to. This is real, per-privilege-level stack switching, and it happens on an ordinary interrupt gate delivery, with no task switch involved at all.
+
+**Task gates** are the fourth kind, and they don't point at code — they point at a TSS, and delivering through one doesn't run a handler in the current context at all. It hands the entire interrupt off to `CPU_SwitchTask()`, which is §9.3's subject.
+
+One gate type is conspicuously absent from this switch: **call gates** (`DESC_286_CALL_GATE`/`DESC_386_CALL_GATE`) exist as descriptor types and are decoded the same way, but they're not valid IDT entries — a call gate reached via `INT` falls straight into the `default: E_Exit(...)` case. Call gates are reached through far `CALL`/`JMP` instead, a separate dispatch path elsewhere in `cpu.cpp` this chapter doesn't cover; they exist for controlled cross-privilege *subroutine calls*, a different problem than "something needs to interrupt what's currently running."
+
+The whole `switch` is wrapped in a `try`/`catch` for `GuestPageFaultException` — the same exception type, and the same rollback pattern, the interlude after Chapter 6 found inside `core_full`'s load/op/save pipeline:
+
+```cpp
+try {
+    switch (gate.Type()) { ... }
+}
+catch (const GuestPageFaultException &pf) {
+    CPU_SetSegGeneral(ss, old_ss);
+    reg_esp = old_esp;
+    CPU_SetCPL(old_cpl);
+    throw;
+}
+```
+
+Reading a descriptor, or writing to the new stack a privilege-raising gate just switched to, can fault the same way any other memory access can — and gate delivery is exactly the kind of multi-step operation (segment loaded, CPL changed, stack half-switched) that needs its partial effects undone if step three faults after steps one and two already committed. This is the third time this book has run into that same shape of problem, solved the same way each time: `core_full`'s instruction pipeline, `CPU_Exception()`'s double-fault escalation, and now gate delivery all treat "a fault interrupted a multi-step privileged operation" as something that needs an explicit rollback, not just a raised exception.
+
+## 9.3 Task Switching: A Second Function That Reaches `CPU_Interrupt()`'s Territory
+
+A task gate doesn't run an interrupt handler — it *replaces the entire currently-running task* with a different one, restoring every register, every segment, and the page directory itself from a save area in memory called a TSS (Task State Segment). `CPU_SwitchTask()` is a genuinely complete implementation of that 386 feature, and it goes further than most software running under DOSBox-X actually needs:
+
+```cpp
+bool CPU_SwitchTask(Bitu new_tss_selector, TSwitchType tstype, uint32_t old_eip) {
+    ...
+    TaskStateSegment new_tss;
+    if (!new_tss.SetSelector(new_tss_selector))
+        E_Exit("Illegal TSS for switch, selector=%x, switchtype=%lx", ...);
+    if (tstype==TSwitch_IRET) {
+        if (!new_tss.desc.IsBusy()) E_Exit("TSS not busy for IRET");
+    } else {
+        if (new_tss.desc.IsBusy()) E_Exit("TSS busy for JMP/CALL/INT");
+    }
+
+    Bitu new_cr3=0;
+    uint32_t new_eax, new_ebx, ...;
+    if (new_tss.is386) {
+        new_cr3   = mem_readd(new_tss.base+offsetof(TSS_32,cr3));
+        new_eip   = mem_readd(new_tss.base+offsetof(TSS_32,eip));
+        new_eflags= mem_readd(new_tss.base+offsetof(TSS_32,eflags));
+        new_eax   = mem_readd(new_tss.base+offsetof(TSS_32,eax));
+        ...
+        new_ldt   = mem_readw(new_tss.base+offsetof(TSS_32,ldt));
+    } else {
+        E_Exit("286 task switch");
+        ...
+    }
+    ...
+}
+```
+
+`new_cr3` is the detail that separates this from every other context-restoring mechanism in the emulator: a 386 TSS stores the *page directory base register* as part of a task's saved state, so switching tasks via a task gate genuinely swaps the entire address space, not just the visible register file. Chapter 5's paging machinery — the TLB, the `PageHandler` dispatch — doesn't get a separate code path for this; loading `new_cr3` into `CR3` is enough to make every subsequent address translation resolve against the new task's page tables, because that's the only input paging ever needed in the first place.
+
+The `busy` bit exists to prevent a task from switching to itself recursively — `IsBusy()`/`SetBusy()` toggle bit 1 of the TSS descriptor's type field directly:
+
+```cpp
+class TSS_Descriptor : public Descriptor {
+public:
+    Bitu IsBusy(void) const { return saved.seg.type & 2; }
+    Bitu Is386(void) const { return saved.seg.type & 8; }
+    void SetBusy(const bool busy) {
+        if (busy) saved.seg.type |= 2U;
+        else saved.seg.type &= (~2U);
+    }
+};
+```
+
+— and `CPU_SwitchTask()` asserts the opposite bit state depending on *why* the switch is happening: an `IRET` returning from a nested task expects the outgoing TSS to already be marked busy (it's resuming an interrupted task, not starting a fresh one), while a `JMP`/`CALL`/`INT`-triggered switch expects the target *not* to already be busy, catching exactly the "task tried to switch into itself" case the check exists for.
+
+One limitation is stated as bluntly as `dynrec`'s paging refusal was in Chapter 7: `E_Exit("286 task switch")`. Only the 386-format TSS (`TSS_32`, with its 32-bit register fields and the all-important `cr3`) is actually implemented. A 16-bit, 286-style task switch — legal on real 286 hardware, predating paging entirely — is a hard stop. In practice this costs nothing: nothing this book has covered needs 286-style multitasking, and everything that needs hardware task switching at all — a DOS extender, a protected-mode kernel — is 386-targeted code using the 386 TSS format `CPU_SwitchTask()` already handles in full.
+
+## 9.4 The I/O Permission Bitmap
+
+Chapter 8 never had reason to mention that port I/O is privilege-checked at all, because in real mode it isn't — `IN`/`OUT` just work. In protected mode, whether a given `IN AL, DX` is even legal depends on comparing the current privilege level against `IOPL`, and — only when that comparison actually matters — consulting a bitmap embedded in the current task's own TSS:
+
+```cpp
+bool CPU_IO_Exception(Bitu port, Bitu size) {
+    if (cpu.pmode && ((GETFLAG_IOPL<cpu.cpl) || GETFLAG(VM))) {
+        cpu.mpl=0;
+        if (!cpu_tss.is386) goto doexception;
+        PhysPt bwhere=cpu_tss.base+0x66;
+        uint16_t ofs=mem_readw(bwhere);
+        if (ofs>cpu_tss.limit) goto doexception;
+        bwhere=(PhysPt)(cpu_tss.base+ofs+(port/8));
+        uint16_t map=mem_readw(bwhere);
+        uint16_t mask=(0xffffu >> (16u - size)) << (port & 7u);
+        if (map & mask) goto doexception;
+        cpu.mpl=3;
+    }
+    return false;
+doexception:
+    cpu.mpl=3;
+    return CPU_PrepareException(EXCEPTION_GP,0);
+}
+```
+
+The outer condition is the fast path staying fast: `cpu.pmode && (IOPL<CPL || VM)` is false for the overwhelming majority of I/O this emulator ever performs — real-mode DOS, and any protected-mode code running at a privilege level `IOPL` already permits — and in that case `CPU_IO_Exception()` returns `false` immediately with no memory read at all. Only when a program running at a *lower* privilege than `IOPL` demands, or running in V86 mode, attempts a port access does the function go looking for permission: offset `0x66` in the TSS is an Intel-defined field holding the *offset* to the I/O permission bitmap itself, one bit per port, and the specific bits covering the requested port and access size get tested directly. A 286-format TSS has no such field at all — `!cpu_tss.is386` skips straight to `doexception`, matching real hardware, since the I/O bitmap was introduced with the 386 TSS format and doesn't exist on a 286.
+
+This is the mechanism that lets a protected-mode game grant a sound driver direct access to a handful of specific I/O ports without handing it `IOPL=3` and, with it, unrestricted access to every port on the machine — the fine-grained alternative to the all-or-nothing IOPL check this book has otherwise treated as a single number.
+
+## 9.5 Why There's No DPMI Implementation
+
+Everything so far in this chapter is real, general-purpose 386 protected-mode machinery — none of it is specific to any particular protected-mode *standard*. DPMI (the DOS Protected Mode Interface) is the specification most DOS-era protected-mode software actually targets, and searching for it in `src/` turns up no DPMI service dispatcher, no host-side implementation of `INT 31h` calls, nothing that would be recognizable as "DOSBox-X's DPMI layer" — because there isn't one.
+
+What's there instead is `src/builtin/cwsdpmi_exe.cpp`: the actual compiled bytes of CWSDPMI, a well-known real-world open-source DPMI host, embedded as a byte array and registered as an ordinary virtual file:
+
+```cpp
+static const unsigned char bin_cwsdpmi_exe[] = {
+0x4d,0x5a,0x4d,0x01,0x2a,0x00,0x19,0x00,0x20,0x00,0xa1,0x04,0xa1,0x05,0xad,0x08,
+...
+};
+```
+
+```cpp
+VFILE_RegisterBuiltinFileBlob(bfb_CWSDPMI_EXE, "/BIN/");
+```
+
+`CWSDPMI.EXE` shows up on DOSBox-X's virtual drive as `/BIN/CWSDPMI.EXE`, sitting alongside recognized references to `DOS4GW` and `DOS32A` in the shell's command handling — real DPMI hosts, shipped or referenced as ordinary DOS programs, not emulator subsystems. A DJGPP-compiled program that needs a DPMI host loads and runs one of these exactly as it would on real 1990s hardware: the host program itself sets up the GDT/LDT entries, installs interrupt gates, and services `INT 31h` calls by directly manipulating the same descriptor tables and privilege machinery §9.1 through §9.4 already cover — as guest code, indistinguishable from any other program executing on this CPU.
+
+That's the actual answer to "how does DOSBox-X support DPMI": it doesn't, as a special case. It supports the 386 protected-mode ISA accurately enough that a real, unmodified DPMI host — built by someone else, for real hardware, years before DOSBox-X existed — runs correctly on top of it. Everything this chapter has built was necessary for that to be true; nothing further was.
+
+---
+
+*Next: Chapter 10 — VGA/SVGA Emulation, where the book leaves the CPU behind for the first time since Chapter 5 and follows a guest program's writes to segment `0xA000` down to register-level graphics hardware.*

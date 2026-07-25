@@ -1,0 +1,159 @@
+<svg viewBox="0 0 1000 880" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Normal_Loop — one iteration of while(1)</title>
+  <desc>The CPU decode loop: PIC_RunQueue() either lets the decoder run, or falls through to GFX_Events(), a tick check, and eventually increaseticks(). return 0 does not yield to the OS — it causes an immediate re-entry via DOSBOX_RunMachine's do-while loop.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+    </marker>
+    <style>
+      svg {
+      --fg-title: #111827;
+      --fg-subtitle: #4b5563;
+      --arrow: #374151;
+
+      --indigo-bg: #eef2ff;
+      --indigo-border: #6366f1;
+      --indigo-label: #4338ca;
+      --indigo-code: #1e1b4b;
+      --indigo-note: #4b5563;
+
+      --green-bg: #ecfdf5;
+      --green-border: #10b981;
+      --green-label: #065f46;
+      --green-code: #064e3b;
+      --green-note: #4b5563;
+
+      --orange-bg: #fff7ed;
+      --orange-border: #f97316;
+      --orange-label: #9a3412;
+      --orange-code: #7c2d12;
+      --orange-footnote: #9a3412;
+
+      --box-bg: #f3f4f6;
+      --box-border: #9ca3af;
+      --box-text: #374151;
+
+      --footer-line: #e5e7eb;
+      --footer-text: #374151;
+      --footer-subtext: #4b5563;
+      }
+
+      [data-theme='dark'] svg {
+      --fg-title: #f3f4f6;
+      --fg-subtitle: #cbd5e1;
+      --arrow: #9ca3af;
+
+      --indigo-bg: #26264d;
+      --indigo-border: #818cf8;
+      --indigo-label: #a5b4fc;
+      --indigo-code: #e0e7ff;
+      --indigo-note: #9ca3af;
+
+      --green-bg: #163a2e;
+      --green-border: #34d399;
+      --green-label: #6ee7b7;
+      --green-code: #d1fae5;
+      --green-note: #9ca3af;
+
+      --orange-bg: #3a2413;
+      --orange-border: #fb923c;
+      --orange-label: #fdba74;
+      --orange-code: #fed7aa;
+      --orange-footnote: #fdba74;
+
+      --box-bg: #1f2937;
+      --box-border: #94a3b8;
+      --box-text: #e5e7eb;
+
+      --footer-line: #374151;
+      --footer-text: #e5e7eb;
+      --footer-subtext: #cbd5e1;
+      }
+
+      text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+      .code { font-family: Consolas, Menlo, monospace; }
+      .decision { stroke-dasharray: 5 3; }
+    </style>
+  </defs>
+
+  <text x="450" y="36" text-anchor="middle" fill="var(--fg-title)" font-size="20" font-weight="700">Normal_Loop — one iteration of while(1)</text>
+  <text x="450" y="64" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13">The CPU decode loop that hands off to increaseticks() when the budget runs out.</text>
+
+  <!-- D1: PIC_RunQueue() decision -->
+  <rect class="decision" x="240" y="100" width="420" height="90" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+  <text x="450" y="132" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">PIC_RunQueue()</text>
+  <text x="450" y="152" text-anchor="middle" fill="var(--box-text)" font-size="12">returns?</text>
+  <text x="450" y="170" text-anchor="middle" fill="var(--box-text)" font-size="11">dosbox.cpp:469</text>
+
+  <!-- A1: cpudecoder() (green) -->
+  <rect x="700" y="100" width="220" height="90" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+  <text x="724" y="126" fill="var(--green-label)" font-size="15" font-weight="700">cpudecoder()</text>
+  <text x="724" y="146" class="code" fill="var(--green-code)" font-size="12">ret = (*cpudecoder)()</text>
+  <text x="724" y="166" fill="var(--green-note)" font-size="11">executes this batch — dosbox.cpp:475</text>
+
+  <line x1="660" y1="130" x2="700" y2="130" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="680" y="122" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">true</text>
+
+  <line x1="700" y1="164" x2="660" y2="164" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="680" y="184" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">loop restarts</text>
+
+  <line x1="450" y1="190" x2="450" y2="222" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="472" y="210" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">false — budget exhausted</text>
+
+  <!-- GFX_Events() (indigo, compact) -->
+  <rect x="240" y="222" width="420" height="60" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+  <text x="450" y="248" text-anchor="middle" fill="var(--indigo-label)" font-size="15" font-weight="700">GFX_Events()</text>
+  <text x="450" y="268" text-anchor="middle" fill="var(--indigo-note)" font-size="12">pumps the SDL event queue — dosbox.cpp:515</text>
+
+  <line x1="450" y1="282" x2="450" y2="314" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- D2: ticksRemain > 0 decision -->
+  <rect class="decision" x="240" y="314" width="420" height="100" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+  <text x="450" y="350" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">ticksRemain &gt; 0, not paused?</text>
+  <text x="450" y="372" text-anchor="middle" fill="var(--box-text)" font-size="12">dosbox.cpp:516</text>
+
+  <!-- A2: TIMER_AddTick() (indigo) -->
+  <rect x="700" y="314" width="220" height="110" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+  <text x="724" y="340" fill="var(--indigo-label)" font-size="15" font-weight="700">TIMER_AddTick()</text>
+  <text x="724" y="360" class="code" fill="var(--indigo-code)" font-size="12">PIC_Ticks++; CPU_CycleLeft +=</text>
+  <text x="724" y="378" class="code" fill="var(--indigo-code)" font-size="12">CPU_CycleMax</text>
+  <text x="724" y="398" fill="var(--indigo-note)" font-size="11">ticksRemain-- — dosbox.cpp:517-518</text>
+
+  <line x1="660" y1="360" x2="700" y2="360" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="680" y="352" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">yes</text>
+
+  <path d="M920,369 L960,369 L960,78 L550,78 L550,100" fill="none" stroke="var(--indigo-border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text x="868" y="230" text-anchor="start" fill="var(--indigo-note)" font-size="11" font-style="italic">back to</text>
+  <text x="868" y="246" text-anchor="start" fill="var(--indigo-note)" font-size="11" font-style="italic">PIC_RunQueue()</text>
+
+  <line x1="450" y1="414" x2="450" y2="446" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="472" y="434" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no</text>
+
+  <!-- Y1: increaseticks() -> return 0 (orange, combined) -->
+  <rect x="240" y="446" width="420" height="170" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+  <text x="264" y="472" fill="var(--orange-label)" font-size="15" font-weight="700">increaseticks() → return 0</text>
+  <text x="264" y="492" class="code" fill="var(--orange-code)" font-size="12">measure host time, retune if due (§3.9)</text>
+  <text x="264" y="512" fill="var(--orange-footnote)" font-size="11">dosbox.cpp:520-521</text>
+  <text x="264" y="536" fill="var(--orange-footnote)" font-size="11">return 0 does not yield to the OS —</text>
+  <text x="264" y="554" fill="var(--orange-footnote)" font-size="11">DOSBOX_RunMachine's do-while(!ret) calls</text>
+  <text x="264" y="572" fill="var(--orange-footnote)" font-size="11">Normal_Loop() again immediately</text>
+  <text x="264" y="592" fill="var(--orange-footnote)" font-size="11">(dosbox.cpp:751-752)</text>
+
+  <!-- Footer -->
+  <line x1="240" y1="656" x2="660" y2="656" stroke="var(--footer-line)"/>
+
+  <rect x="240" y="676" width="14" height="14" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+  <text x="262" y="687" fill="var(--footer-subtext)" font-size="12">the decoder actually runs</text>
+
+  <rect x="240" y="698" width="14" height="14" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+  <text x="262" y="709" fill="var(--footer-subtext)" font-size="12">ordinary bookkeeping step</text>
+
+  <rect x="240" y="720" width="14" height="14" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+  <text x="262" y="731" fill="var(--footer-subtext)" font-size="12">leaves the fast path (retune / return)</text>
+
+  <text x="450" y="760" text-anchor="middle" fill="var(--footer-text)" font-size="14" font-weight="700">Every TIMER_AddTick() call is followed by another PIC_RunQueue() check.</text>
+  <text x="450" y="780" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">The decoder gets a turn between every owed millisecond, not just at the end of a burst.</text>
+  <text x="450" y="804" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">"return 0" isn't an OS yield — GFX_Events() is where SDL events actually get pumped.</text>
+  <text x="450" y="828" text-anchor="middle" fill="var(--footer-subtext)" font-size="11" font-style="italic">Verified against joncampbell123/dosbox-x @ 192c1756 (dosbox.cpp:432-521, 751-752)</text>
+
+</svg>

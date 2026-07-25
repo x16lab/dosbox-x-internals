@@ -1,0 +1,62 @@
+---
+interface Props {
+  title?: string;
+}
+
+const { title = 'Warning' } = Astro.props;
+---
+
+<aside class="warning" aria-label={title}>
+  <div class="warning-header">
+    <span class="warning-icon">&#9888;</span>
+    <span class="warning-label">{title}</span>
+  </div>
+  <div class="warning-body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .warning {
+    margin: calc(var(--baseline) * 1.5) 0;
+    border: 1px solid oklch(0.65 0.18 80);
+    background: var(--color-surface);
+  }
+
+  .warning-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem var(--baseline);
+    border-bottom: 1px solid oklch(0.65 0.18 80 / 0.3);
+    background: color-mix(in oklch, oklch(0.65 0.18 80), transparent 88%);
+  }
+
+  .warning-icon {
+    color: oklch(0.65 0.18 80);
+    font-size: 1rem;
+  }
+
+  .warning-label {
+    color: oklch(0.65 0.18 80);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .warning-body {
+    padding: var(--baseline);
+  }
+
+  .warning-body :global(p) {
+    margin: 0 0 0.75rem;
+    color: var(--color-muted);
+    line-height: 1.7;
+  }
+
+  .warning-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+</style>

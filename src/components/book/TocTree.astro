@@ -1,0 +1,36 @@
+---
+import type { TocHeading } from '../../lib/headings';
+
+interface Props {
+  items: TocHeading[];
+  linkClass?: string;
+  baseHref?: string;
+  chapterNum?: number;
+}
+
+const { items, linkClass, baseHref = '', chapterNum } = Astro.props;
+
+function stripLeadingNumber(text: string): string {
+  return text.replace(/^[\d.]+\s+/, '');
+}
+
+function render(items: TocHeading[], cls?: string, base?: string, prefix?: string): string {
+  return items
+    .map(
+      (item, i) => {
+        const num = prefix ? `${prefix}.${i + 1}` : `${i + 1}`;
+        return `
+    <li>
+      <a href="${base}#${item.slug}" class="${cls ? cls + ' ' : ''}toc-depth-${item.depth}">
+        <span class="toc-sublink-num">${num}</span>
+        ${stripLeadingNumber(item.text)}
+      </a>
+      ${item.children.length > 0 ? `<ul class="toc-sublist">${render(item.children, cls, base, num)}</ul>` : ''}
+    </li>`;
+      }
+    )
+    .join('');
+}
+---
+
+{items.length > 0 && <ul class="toc-sublist" set:html={render(items, linkClass, baseHref, chapterNum != null ? String(chapterNum) : undefined)} />}

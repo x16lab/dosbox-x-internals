@@ -1,0 +1,54 @@
+---
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/url';
+import { SITE, BOOK_NAV } from '../consts';
+import { buildTocTree } from '../lib/headings';
+import TocTree from '../components/book/TocTree.astro';
+
+const chapters = (await getCollection('book'))
+  .filter((entry) => !entry.data.draft);
+
+const headingsMap: Record<string, { depth: number; slug: string; text: string }[]> = {};
+for (const entry of chapters) {
+  const { headings } = await render(entry);
+  const slug = entry.data.chapterSlug || entry.id.replace(/\.mdx?$/, '');
+  headingsMap[slug] = headings;
+}
+
+// Sort by order field for correct TOC display
+const sortedNav = [...BOOK_NAV].sort((a, b) => a.order - b.order);
+
+const navTrees = sortedNav.map((ch) => {
+  const tree = headingsMap[ch.slug]
+    ? buildTocTree(headingsMap[ch.slug])
+    : [];
+  return { ch, tree };
+});
+---
+
+<BaseLayout title={`Table of Contents — ${SITE.title}`} description={`Detailed table of contents for ${SITE.title}.`}>
+  <section class="page-head section">
+    <p class="eyebrow">Table of Contents</p>
+    <h1>Detailed Contents</h1>
+    <p class="lead">Every chapter and section heading in the book.</p>
+  </section>
+
+<section class="section" aria-label="Detailed table of contents">
+    <ol class="dense-toc">
+      {
+        navTrees.map(({ ch, tree }) => (
+          <li>
+            <a href={withBase(`/read/#ch-${ch.slug}`)} class="dense-toc-link">
+              <span class="dense-toc-num">{ch.order}</span>
+              <span>{ch.title}</span>
+            </a>
+            {tree.length > 0 && (
+              <TocTree items={tree} linkClass="dense-toc-sublink" baseHref={withBase('/read/')} chapterNum={ch.order} />
+            )}
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+</BaseLayout>

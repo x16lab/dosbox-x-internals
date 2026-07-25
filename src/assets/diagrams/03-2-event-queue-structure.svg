@@ -1,0 +1,278 @@
+<svg viewBox="0 0 1000 900" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-text: #374151;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-text: #e5e7eb;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+
+            .label  { font-weight: 700; font-size: 15px; }
+            .code   { font-family: Consolas, Menlo, monospace; font-size: 12px; }
+            .note   { font-size: 10.5px; }
+            .idx    { font-family: Consolas, Menlo, monospace; font-size: 10px; }
+        </style>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="500" y="34" text-anchor="middle" fill="var(--fg-title)" font-size="22" font-weight="700">PIC Event Queue Structure</text>
+    <text x="500" y="56" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13" font-family="Consolas, Menlo, monospace">src/hardware/pic.cpp — struct PICEntry, AddEntry(), PIC_AddEvent()</text>
+
+    <!-- Section A: struct anatomy -->
+    <rect x="250" y="80" width="500" height="118" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)"/>
+    <text x="500" y="100" text-anchor="middle" class="label" fill="var(--inset-label)" font-size="14">struct PICEntry — pic.cpp:228</text>
+    <g class="code" fill="var(--cell-text)">
+        <rect x="265" y="116" width="110" height="56" fill="var(--cell-bg)" stroke="var(--cell-border)"/>
+        <text x="320" y="136" text-anchor="middle" font-weight="700">index</text>
+        <text x="320" y="153" text-anchor="middle" font-size="10">pic_tickindex_t</text>
+        <text x="320" y="166" text-anchor="middle" font-size="10">(long double)</text>
+
+        <rect x="385" y="116" width="110" height="56" fill="var(--cell-bg)" stroke="var(--cell-border)"/>
+        <text x="440" y="136" text-anchor="middle" font-weight="700">value</text>
+        <text x="440" y="153" text-anchor="middle" font-size="10">Bitu</text>
+
+        <rect x="505" y="116" width="110" height="56" fill="var(--cell-bg)" stroke="var(--cell-border)"/>
+        <text x="560" y="136" text-anchor="middle" font-weight="700">pic_event</text>
+        <text x="560" y="153" text-anchor="middle" font-size="10">PIC_EventHandler</text>
+        <text x="560" y="166" text-anchor="middle" font-size="10">(fn ptr)</text>
+
+        <rect x="625" y="116" width="110" height="56" fill="var(--cell-bg)" stroke="var(--cell-border)"/>
+        <text x="680" y="136" text-anchor="middle" font-weight="700">next</text>
+        <text x="680" y="153" text-anchor="middle" font-size="10">PICEntry*</text>
+    </g>
+    <text x="500" y="216" text-anchor="middle" class="note" fill="var(--fg-subtitle)">one struct, reused via `next` — the free list and the sorted queue are two orderings of the same array, not separate allocations</text>
+
+    <!-- Section B: fixed pool -->
+    <text x="500" y="252" text-anchor="middle" class="label" fill="var(--box-text)" font-size="14">entries[PIC_QUEUESIZE] — fixed array, no malloc  (pic.cpp:35: #define PIC_QUEUESIZE 8192)</text>
+
+    <g class="idx">
+        <!-- slot 0 free -->
+        <rect x="114" y="266" width="70" height="50" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="149" y="296" text-anchor="middle" fill="var(--box-text)" font-weight="700">free</text>
+        <text x="149" y="330" text-anchor="middle" fill="var(--footer-subtext)">[0]</text>
+
+        <!-- slot 1 busy 0.83 -->
+        <rect x="192" y="266" width="70" height="50" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="227" y="296" text-anchor="middle" fill="var(--indigo-code)" font-weight="700">0.83</text>
+        <text x="227" y="330" text-anchor="middle" fill="var(--footer-subtext)">[1]</text>
+
+        <!-- slot 2 free -->
+        <rect x="270" y="266" width="70" height="50" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="305" y="296" text-anchor="middle" fill="var(--box-text)" font-weight="700">free</text>
+        <text x="305" y="330" text-anchor="middle" fill="var(--footer-subtext)">[2]</text>
+
+        <!-- slot 3 busy 0.12 HEAD -->
+        <rect x="348" y="266" width="70" height="50" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="2"/>
+        <text x="383" y="296" text-anchor="middle" fill="var(--green-code)" font-weight="700">0.12</text>
+        <text x="383" y="330" text-anchor="middle" fill="var(--footer-subtext)">[3]</text>
+
+        <!-- slot 4 free -->
+        <rect x="426" y="266" width="70" height="50" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="461" y="296" text-anchor="middle" fill="var(--box-text)" font-weight="700">free</text>
+        <text x="461" y="330" text-anchor="middle" fill="var(--footer-subtext)">[4]</text>
+
+        <!-- slot 5 busy 0.41 -->
+        <rect x="504" y="266" width="70" height="50" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="539" y="296" text-anchor="middle" fill="var(--indigo-code)" font-weight="700">0.41</text>
+        <text x="539" y="330" text-anchor="middle" fill="var(--footer-subtext)">[5]</text>
+
+        <!-- slot 6 free -->
+        <rect x="582" y="266" width="70" height="50" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="617" y="296" text-anchor="middle" fill="var(--box-text)" font-weight="700">free</text>
+        <text x="617" y="330" text-anchor="middle" fill="var(--footer-subtext)">[6]</text>
+
+        <!-- slot 7 free -->
+        <rect x="660" y="266" width="70" height="50" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="695" y="296" text-anchor="middle" fill="var(--box-text)" font-weight="700">free</text>
+        <text x="695" y="330" text-anchor="middle" fill="var(--footer-subtext)">[7]</text>
+
+        <!-- slot 8 busy 0.91 -->
+        <rect x="738" y="266" width="70" height="50" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="773" y="296" text-anchor="middle" fill="var(--indigo-code)" font-weight="700">0.91</text>
+        <text x="773" y="330" text-anchor="middle" fill="var(--footer-subtext)">[8]</text>
+
+        <!-- slot 9 free -->
+        <rect x="816" y="266" width="70" height="50" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="851" y="296" text-anchor="middle" fill="var(--box-text)" font-weight="700">free</text>
+        <text x="851" y="330" text-anchor="middle" fill="var(--footer-subtext)">[9]</text>
+    </g>
+    <text x="905" y="298" text-anchor="middle" fill="var(--fg-subtitle)" font-size="18">…</text>
+    <text x="500" y="346" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">10 of 8192 slots shown — array position carries no meaning, order comes only from the `next` pointers below</text>
+
+    <!-- Section C1: free list -->
+    <text x="500" y="380" text-anchor="middle" class="label" fill="var(--box-text)" font-size="14">Free list — pic_queue.free_entry</text>
+
+    <g>
+        <rect x="130" y="390" width="90" height="50" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="175" y="408" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[9]</text>
+        <text x="175" y="426" text-anchor="middle" class="code" fill="var(--box-text)" font-weight="700">free</text>
+        <path d="M220,415 L258,415" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <rect x="260" y="390" width="90" height="50" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="305" y="408" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[2]</text>
+        <text x="305" y="426" text-anchor="middle" class="code" fill="var(--box-text)" font-weight="700">free</text>
+        <path d="M350,415 L388,415" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <rect x="390" y="390" width="90" height="50" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="435" y="408" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[6]</text>
+        <text x="435" y="426" text-anchor="middle" class="code" fill="var(--box-text)" font-weight="700">free</text>
+        <path d="M480,415 L518,415" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <rect x="520" y="390" width="90" height="50" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="565" y="408" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[0]</text>
+        <text x="565" y="426" text-anchor="middle" class="code" fill="var(--box-text)" font-weight="700">free</text>
+        <path d="M610,415 L648,415" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <rect x="650" y="390" width="90" height="50" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="695" y="408" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[7]</text>
+        <text x="695" y="426" text-anchor="middle" class="code" fill="var(--box-text)" font-weight="700">free</text>
+        <path d="M740,415 L778,415" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <rect x="780" y="390" width="90" height="50" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="825" y="408" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[4]</text>
+        <text x="825" y="426" text-anchor="middle" class="code" fill="var(--box-text)" font-weight="700">free</text>
+        <path d="M870,415 L905,415" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+        <text x="925" y="420" text-anchor="middle" class="note" fill="var(--dashed-line)" font-style="italic">NULL</text>
+    </g>
+    <text x="500" y="450" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">order is LIFO, never index-sorted — pop front on alloc (pic.cpp:669), push front on free (pic.cpp:775-776)</text>
+
+    <!-- Section C2: sorted active queue -->
+    <text x="500" y="482" text-anchor="middle" class="label" fill="var(--indigo-label)" font-size="14">Sorted active queue — pic_queue.next_entry (ascending index)</text>
+
+    <g>
+        <rect x="260" y="500" width="90" height="50" rx="8" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="2"/>
+        <text x="305" y="518" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[3]</text>
+        <text x="305" y="536" text-anchor="middle" class="code" fill="var(--green-code)" font-weight="700">0.12</text>
+        <path d="M350,525 L388,525" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="369" y="518" text-anchor="middle" class="note" fill="var(--dashed-line)" font-style="italic">next</text>
+
+        <rect x="390" y="500" width="90" height="50" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="435" y="518" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[5]</text>
+        <text x="435" y="536" text-anchor="middle" class="code" fill="var(--indigo-code)" font-weight="700">0.41</text>
+        <path d="M480,525 L518,525" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="499" y="518" text-anchor="middle" class="note" fill="var(--dashed-line)" font-style="italic">next</text>
+
+        <rect x="520" y="500" width="90" height="50" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="565" y="518" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[1]</text>
+        <text x="565" y="536" text-anchor="middle" class="code" fill="var(--indigo-code)" font-weight="700">0.83</text>
+        <path d="M610,525 L648,525" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <text x="629" y="518" text-anchor="middle" class="note" fill="var(--dashed-line)" font-style="italic">next</text>
+
+        <rect x="650" y="500" width="90" height="50" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="695" y="518" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[8]</text>
+        <text x="695" y="536" text-anchor="middle" class="code" fill="var(--indigo-code)" font-weight="700">0.91</text>
+        <path d="M740,525 L775,525" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+        <text x="795" y="530" text-anchor="middle" class="note" fill="var(--dashed-line)" font-style="italic">NULL</text>
+    </g>
+
+    <text x="305" y="566" text-anchor="middle" class="note" fill="var(--green-note)" font-weight="700" font-style="italic">PIC_RunQueue() pops here when index is due</text>
+
+    <!-- Section D: AddEntry insertion callout -->
+    <text x="500" y="606" text-anchor="middle" class="label" fill="var(--orange-label)" font-size="14">AddEntry(): new event spliced in by ascending index</text>
+
+    <g>
+        <rect x="300" y="650" width="90" height="50" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="345" y="668" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[5]</text>
+        <text x="345" y="686" text-anchor="middle" class="code" fill="var(--indigo-code)" font-weight="700">0.41</text>
+
+        <rect x="455" y="650" width="90" height="50" rx="8" stroke-dasharray="5,3" fill="var(--indigo-bg)" stroke="var(--orange-border)" stroke-width="2"/>
+        <text x="500" y="666" text-anchor="middle" class="idx" fill="var(--orange-footnote)">[new]</text>
+        <text x="500" y="684" text-anchor="middle" class="code" fill="var(--indigo-code)" font-weight="700">0.55</text>
+
+        <rect x="610" y="650" width="90" height="50" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="655" y="668" text-anchor="middle" class="idx" fill="var(--footer-subtext)">[1]</text>
+        <text x="655" y="686" text-anchor="middle" class="code" fill="var(--indigo-code)" font-weight="700">0.83</text>
+
+        <path d="M390,675 L453,675" fill="none" stroke="var(--orange-border)" stroke-width="2" marker-end="url(#arrow)"/>
+        <path d="M547,675 L608,675" fill="none" stroke="var(--orange-border)" stroke-width="2" marker-end="url(#arrow)"/>
+
+        <path d="M390,700 Q500,742 610,700" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="500" y="748" text-anchor="middle" class="note" fill="var(--dashed-line)" font-style="italic">old [5]→[1] link, replaced by the splice above</text>
+    </g>
+
+    <!-- Footer -->
+    <line x1="70" y1="782" x2="930" y2="782" stroke="var(--footer-line)"/>
+    <text x="500" y="806" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">Free list (gray) and active queue (indigo) are the same fixed array, re-linked by `next` — never separately allocated.</text>
+    <text x="500" y="826" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">PIC_AddEvent() pulls one slot off the free list, sets its index, then AddEntry() walks the active list to splice it in at the ascending-index position.</text>
+    <text x="500" y="848" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">PIC_QUEUESIZE bounds the pool — a full queue means no free entries left, not an allocation failure.</text>
+
+</svg>

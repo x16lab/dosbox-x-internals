@@ -1,0 +1,142 @@
+---
+title: "DOSBox-X-Specific Extensions"
+description: "The platform-scope decisions that distinguish DOSBox-X from the project it forked from. NEC PC-98 as a case study in modeling a genuinely different computer rather than a graphics mode, grounded in the pervasive IS_PC98_ARCH conditional and the parallel vga_pc98_*.cpp file family. Windows 9x compatibility as accumulated archaeology — a FAT32 directory-entry-count assumption, a Long File Name ordering quirk, and a read-only-media write silently swallowed specifically to avoid a Windows 9x bluescreen. Japanese DOS and code-page handling as three coexisting answers to the same problem: PC-98's hardware-native text rendering, the DOS/V family's software-only approach across four regional variants, and the generic Shift-JIS/DBCS path serving everything else."
+order: 18
+chapterSlug: "dosbox-x-extensions"
+part: "host-integration"
+---
+# Chapter 18 — DOSBox-X-Specific Extensions {#chapter-18-dosbox-x-specific-extensions}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 18.1 The Fork's Whole Point, Made Concrete {#the-fork-s-whole-point-made-concrete}
+
+@chapter(what-is-dosbox-x) named the scope decisions that separate DOSBox-X from the project it forked from: full PC-98 support, deeper Windows 9x compatibility, and character-encoding handling well beyond what a gaming-focused emulator would ever need to touch. At the time, those were historical claims — the kind of thing a README says about a project's ambitions. This chapter is where those claims get checked against source, the same way every other claim in this book has been.
+
+What ties the three together isn't a shared mechanism the way, say, index/data register pairs tied @chapter(vga-emulation)'s four VGA controllers together. It's a shared attitude: each of these features exists because DOSBox-X's maintainers were willing to model something a narrower, gaming-focused fork wouldn't have bothered with — an entire alternate PC architecture, a guest operating system's own undocumented quirks, or a character encoding scheme that has nothing to do with any of the DOS-era games this book keeps using as its running examples.
+
+## 18.2 PC-98: Not a Graphics Mode, a Different Computer {#pc-98-not-a-graphics-mode-a-different-computer}
+
+Start with where PC-98 support actually lives in the code, because it's revealing before you even read a line of logic. `include/dosbox.h` declares the machine types DOSBox-X can emulate as one enum:
+
+```cpp
+enum MachineType {
+    MCH_HERC,
+    MCH_CGA,
+    MCH_TANDY,
+    MCH_PCJR,
+    MCH_EGA,
+    MCH_VGA,
+    MCH_PC98,
+};
+```
+
+Six of those seven values name graphics adapters — genuinely comparable choices, since a PC with a Hercules card and a PC with a VGA card are the same underlying computer with a different video board. `MCH_PC98` sits in the same list, at the same enum level, even though a PC-98 is not an IBM-compatible PC with a different graphics card. It's NEC's own, largely incompatible architecture — different BIOS conventions, different interrupt assignments, a different graphics subsystem built around NEC's own GDC (Graphics Display Controller) rather than anything VGA-derived, and, as @section(dosbox-x-extensions/japanese-dos-and-code-pages-three-answers-to-the-same-problem) covers, native hardware support for rendering Japanese text that IBM-compatible hardware never had. Modeling that whole distinction as one more value in a graphics-adapter enum is a genuine simplification — and DOSBox-X spends the rest of its source tree making up for that simplification with a single, relentlessly pervasive conditional.
+
+`IS_PC98_ARCH` (`#define IS_PC98_ARCH (machine==MCH_PC98)`, `include/dosbox.h`) is one of the most heavily used macros in the entire codebase. `bios.cpp` alone checks it 67 separate times; `dos_programs.cpp`, `dos.cpp`, `sblaster.cpp`, `mouse.cpp`, `vga_draw.cpp`, `drive_fat.cpp`, `bios_keyboard.cpp`, `bios_disk.cpp`, `pic.cpp`, `timer.cpp`, `ide.cpp` — dozens of files, spanning the BIOS, the DOS kernel, storage, input, video, and audio — all branch on this one boolean somewhere in their logic. You've already met several of these branches without their significance being flagged at the time: @chapter(dma-and-pit) found that PIT channel 1 drives the PC speaker on PC-98 instead of channel 2, because NEC wired their own PPI-equivalent logic differently from the IBM-compatible convention. That wasn't an isolated exception — it's the pattern repeating, once per subsystem, everywhere PC-98's actual hardware behavior diverges from the IBM-compatible baseline this book has spent fifteen chapters assuming.
+
+Alongside that pervasive conditional sits a parallel family of dedicated source files, mirroring the IBM-compatible VGA family @chapter(vga-emulation) walked through register block by register block:
+
+```text
+src/hardware/vga_pc98_gdc.cpp        - NEC's Graphics Display Controller (not VGA-derived)
+src/hardware/vga_pc98_gdc_draw.cpp   - GDC-driven scanline rendering
+src/hardware/vga_pc98_crtc.cpp       - PC-98's own CRTC, a genuinely different register set
+src/hardware/vga_pc98_egc.cpp        - Enhanced Graphics Charger, a PC-98-specific acceleration unit
+src/hardware/vga_pc98_dac.cpp        - PC-98's own palette DAC
+src/hardware/vga_pc98_cg.cpp         - Character Generator, the hardware font ROM §18.4 depends on
+```
+
+Notice what this file list is *not*: it isn't `vga_gfx.cpp` and `vga_crtc.cpp` with a PC-98-specific branch tacked on internally. It's a wholesale parallel implementation, file for file, of the same conceptual territory @chapter(vga-emulation)'s IBM-compatible VGA family covers — because a GDC genuinely isn't a VGA Graphics Controller with different register offsets, it's a different chip with a different register model built around different assumptions about how a program draws to the screen. Trying to force PC-98's graphics hardware through the same `PageHandler` and register-block abstractions @chapter(vga-emulation) built for VGA would have meant compromising the fidelity of one architecture or the other. DOSBox-X's answer was to duplicate the effort instead of the abstraction — the same modularity instinct @chapter(dosbox-x-architecture) introduced (one file, one chip, one job), scaled up to "one file family, one entire alternate computer."
+
+## 18.3 Windows 9x: Compatibility as Archaeology {#windows-9x-compatibility-as-archaeology}
+
+Where PC-98 support is about faithfully modeling different *hardware*, Windows 9x compatibility is about something else entirely: faithfully modeling a specific guest *operating system's* own undocumented behavior, quirks and all, discovered the way archaeology discovers anything — by running into the evidence a real system left behind.
+
+Three examples make this concrete, each addressing something Windows 9x does that has nothing to do with any documented FAT or BIOS specification, only with what Windows 9x's own drivers actually do:
+
+**A directory-entry-count assumption baked directly into a type choice.** `drive_fat.cpp`'s handling of long-filename directory positions carries this comment:
+
+```cpp
+dirPos = lfn_filefind_handle>=LFN_FILEFIND_MAX?dta.GetDirID():dpos[lfn_filefind_handle];
+/* NTS: Windows 9x is said to have a 65536 dirent limit even for FAT32,
+   so dirPos as 16-bit is acceptable */
+```
+
+That's not a limit the FAT32 specification imposes — it's a limit *Windows 9x's own FAT driver* imposes, and DOSBox-X's own directory-position tracking adopts a 16-bit type on the strength of that limit holding for the guest operating systems it actually needs to support, not because FAT32 itself demands it.
+
+**Directory entry ordering matching a specific driver's behavior, not just a specification.** Later in the same file:
+
+```cpp
+/* assume last entry comes first, because that's how Windows 9x
+   does it and that is how you're supposed to do it according to Microsoft */
+```
+
+"According to Microsoft" is doing real work in that comment — this isn't DOSBox-X's own convention, it's a documented (or at least Microsoft-acknowledged) property of how Windows 9x's own FAT driver lays out long-filename entries, reproduced because software running under an emulated Windows 9x may depend on encountering entries in that specific order.
+
+**A write silently swallowed, specifically to prevent a real guest-OS crash.** The sharpest example lives in `bios_disk.cpp`, in the code handling writes to a disk's master boot record:
+
+```cpp
+if (sectnum == SECT_MBR) {
+    // Windows 9x writes the disk timestamp into the booter area on startup.
+    // Just copy that part over so it doesn't get treated as a difference that needs to be stored.
+    memcpy(mbr.booter, data, sizeof(mbr.booter));
+}
+
+if (readOnly) return 0; // just return without error to avoid bluescreens in Windows 9x
+```
+
+Windows 9x, on startup, writes a timestamp into a specific region of the boot sector — undocumented behavior that has nothing to do with any FAT specification, discovered presumably by observing what a real Windows 9x installation actually does on real or emulated disks. On a read-only disk image, that write can't actually succeed — but DOSBox-X doesn't report the failure. It silently returns success instead, because the *honest* answer (a write error) is exactly the kind of thing that makes Windows 9x — an operating system with famously fragile disk-I/O error handling — blue-screen. The comment doesn't hedge about this; it names the exact failure mode being avoided.
+
+None of these three fixes generalizes to "handle FAT32 correctly" or "handle MBR writes correctly" in the abstract. Each one exists because Windows 9x specifically does something a stricter reading of the relevant specification wouldn't predict, and DOSBox-X chose to match the real, occasionally undocumented behavior of the guest operating system people actually run, rather than the behavior a specification alone would justify.
+
+## 18.4 Japanese DOS and Code Pages: Three Answers to the Same Problem {#japanese-dos-and-code-pages-three-answers-to-the-same-problem}
+
+DOS-era software rendering Japanese text faces a problem IBM-compatible hardware was never built for: Japanese text requires thousands of distinct glyphs, far more than an 8-bit character code and a small hardware font ROM can represent. Three genuinely different solutions to that problem coexist in DOSBox-X's source, corresponding to three different eras and philosophies of how DOS-era hardware actually solved it.
+
+**PC-98's answer: dedicated hardware.** @section(dosbox-x-extensions/pc-98-not-a-graphics-mode-a-different-computer) already introduced `vga_pc98_cg.cpp` — the Character Generator, a hardware font ROM built into PC-98 machines specifically to hold the glyphs IBM-compatible font ROMs never needed. Text rendering on PC-98 doesn't route through anything resembling the generic DOS code-page mechanism the rest of this section covers; it's handled by PC-98's own graphics hardware, drawing directly from that dedicated character ROM. This is the "solve it in silicon" answer, and it's only available to a platform willing to be a genuinely different computer, which @section(dosbox-x-extensions/pc-98-not-a-graphics-mode-a-different-computer) already established PC-98 is.
+
+**DOS/V's answer: solve it entirely in software, on unmodified hardware.** A different, later approach avoided custom hardware entirely: DOS/V ran on standard IBM-compatible AT hardware and did all Japanese (and, as it turned out, several other East Asian languages') text rendering in software, drawing glyphs into ordinary VGA graphics memory rather than relying on any hardware font ROM at all. DOSBox-X models this as a small family, not a single flag:
+
+```cpp
+#define IS_DOSV (dos.set_jdosv_enabled || dos.set_kdosv_enabled || \
+                 dos.set_pdosv_enabled || dos.set_tdosv_enabled)
+```
+
+Four separate enable flags — Japanese, Korean, and (going by the naming convention) two variants covering simplified and traditional Chinese — each representing a genuinely separate regional DOS/V localization, all sharing the same underlying "no special hardware, do it all in software on a standard AT" philosophy. This is worth noticing precisely because it means "Japanese DOS support" undersells what this section of DOSBox-X actually covers: the DOS/V family exists because several East Asian markets independently needed the same kind of software-only solution IBM-compatible hardware couldn't provide natively, and DOSBox-X models the resulting family of DOS/V variants rather than treating Japanese as a special case among them.
+
+**The generic answer: Shift-JIS detection for everything else.** For software and configurations that fall into neither the PC-98 nor the DOS/V category, DOSBox-X falls back to a third mechanism: direct Shift-JIS lead-byte detection, the classic technique for handling a **double-byte character set (DBCS)** where most bytes represent one character but certain byte values signal "this is the first half of a two-byte character, read one more byte before interpreting anything." `shiftjis_lead_byte()` (`src/dos/dos.cpp`) implements the actual detection:
+
+```cpp
+bool shiftjis_lead_byte(int c) {
+    if ((((unsigned char)c & 0xE0) == 0x80) ||
+        (((unsigned char)c & 0xE0) == 0xE0))
+        return true;
+    return false;
+}
+```
+
+That bitmask check is doing real, specific work: masking a byte with `0xE0` and comparing against `0x80` catches the `0x81`–`0x9F` lead-byte range, and comparing against `0xE0` catches the `0xE0`–`0xFC` range — together, the two disjoint ranges the real Shift-JIS encoding actually reserves for the first half of a two-byte sequence. `isDBCSCP()` gates this behavior on the currently active code page being one that uses a double-byte scheme at all, so `isDBCSCP() && isKanji1_gbk(*idx)` (seen in `DBCS_upcase()`, among other call sites) becomes the general pattern: check whether the active code page is a DBCS one, and if so, treat the current byte as potentially the first half of a pair rather than a complete character on its own — the same check repeated everywhere DOSBox-X's own string handling needs to walk a buffer of guest text correctly rather than byte-by-byte.
+
+It's worth closing the loop back to @chapter(sound) — no, @chapter(vga-emulation)'s `SCREEN_TTF` output backend, briefly mentioned in @chapter(host-abstraction-sdl): the generic DOS code-page-switching service, `INT 21h AH=66h`, explicitly refuses to change the active code page unless TrueType output is in use, and explicitly excludes PC-98, JEGA, and DOS/V from even attempting it:
+
+```cpp
+if (!isSupportedCP(reg_bx) || IS_PC98_ARCH || IS_JEGA_ARCH || IS_DOSV) {
+    LOG(LOG_DOSMISC,LOG_ERROR)("DOS:Invalid codepage %d", reg_bx);
+    CALLBACK_SCF(true);
+    dos.errorcode = 2;
+    reg_ax = dos.errorcode;
+    break;
+}
+```
+
+That exclusion list is the three solutions this section just covered, named explicitly in one guard clause: PC-98 renders through its own hardware character generator, DOS/V renders entirely in software through its own mechanism, and neither one has any business going through the generic code-page path meant for everything else. There is no single, unified "how DOSBox-X handles Japanese text" answer to give — there are three, each tied to a different real historical approach to the same underlying problem, and the source keeps them exactly as separate as the actual hardware and software history that produced them.
+
+## 18.5 What Carries Forward {#what-carries-forward}
+
+Every other device chapter in this book has been about modeling one real chip, or one small family of closely related chips, faithfully enough that software written against the real hardware's register-level behavior runs correctly under emulation. This chapter has been about the same instinct applied at a much larger scale: an entire alternate computer architecture modeled alongside the IBM-compatible baseline rather than folded into it, a guest operating system's own undocumented quirks reproduced because a specification alone wouldn't predict them, and a character-encoding problem solved three separate times because three separate real historical solutions actually existed and DOS-era software might depend on any one of them.
+
+None of this was necessary for DOSBox-X to be a competent DOS emulator in the narrower sense @chapter(what-is-dosbox-x) described the original DOSBox project pursuing. It's necessary only if the goal is the harder one @chapter(what-is-dosbox-x) said distinguished the fork: modeling the real, full, occasionally inconvenient breadth of what "a DOS-era computer" actually meant, across markets and architectures the original project never had reason to touch.
+
+---
+
+*Next: @chapter(debugger-logging-static-analysis) — Debugging and Instrumentation, where DOSBox-X's integrated debugger and logging subsystems turn everything this book has covered from source you can read into behavior you can watch happen, one instruction at a time.*

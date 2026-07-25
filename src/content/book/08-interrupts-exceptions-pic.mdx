@@ -1,0 +1,260 @@
+---
+title: "Interrupts, Exceptions, and the PIC"
+description: "Hardware IRQs, software INT instructions, and CPU exceptions — three triggers converging on CPU_Interrupt(), differing only by a type flag. Covers the master/slave 8259 cascade, IRQ2-to-IRQ9 historical remap, a full device-to-handler trace from PIT tick through PIC_ActivateIRQ and PIC_runIRQs to the guest handler and EOI, a figure tracing the real-mode IVT lookup step by step, and the NMI path that turns three converging callers into (at least) four."
+order: 8
+chapterSlug: "interrupts-exceptions-pic"
+part: "the-cpu"
+---
+
+import Diagram from '../../components/Diagram.astro';
+
+# Chapter 8 — Interrupts, Exceptions, and the PIC {#chapter-8-interrupts-exceptions-and-the-pic}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 8.1 A Machine With Too Many Things Happening At Once {#a-machine-with-too-many-things-happening-at-once}
+
+By 1984, an IBM PC could have a timer ticking 18.2 times per second, a keyboard generating scan codes asynchronously, a floppy controller completing DMA transfers, and a serial port receiving bytes from a modem. The CPU could only execute one instruction at a time, yet dozens of independent devices needed its attention. The question IBM's engineers had to answer was simple: how does a machine allow hardware to interrupt whatever the CPU is currently doing without descending into chaos?
+
+IBM's answer had three parts, and DOSBox-X still implements all of them today:
+
+- **Hardware interrupts (IRQs)** — a device (the PIT, keyboard controller, floppy controller, sound card) needs the CPU's attention, routed through the two cascaded 8259 Programmable Interrupt Controllers introduced historically in @chapter(what-is-dosbox-x).
+- **Software interrupts** — the guest program deliberately executes an `INT` instruction, almost always to request a DOS or BIOS service (`INT 21h` being the single most common one in this book's remaining chapters).
+- **Exceptions** — the CPU itself detects a fault during instruction execution (an invalid opcode, a divide-by-zero, a protection violation) and has to interrupt normal execution to report it.
+
+DOSBox-X inherits this entire model wholesale. The surprising discovery waiting later in the chapter is that DOSBox-X ultimately delivers all three using the same function — and, as @section(interrupts-exceptions-pic/three-reasons-to-interrupt-one-mechanism-or-is-it-four) will show, a fourth kind of interrupt as well.
+
+## 8.2 The Hardware Answer: The 8259 PIC {#the-hardware-answer-the-8259-pic}
+
+Hardware interrupts don't reach the CPU directly — they arrive by way of the two Intel 8259 Programmable Interrupt Controllers a real IBM AT-class machine actually shipped with, and DOSBox-X models both explicitly as instances of a `PIC_Controller` struct (`src/hardware/pic.cpp`):
+
+```cpp
+struct PIC_Controller {
+    uint8_t irr;   // interrupt request register — which lines are currently asserted
+    uint8_t imr;   // interrupt mask register — which lines are disabled
+    uint8_t imrr;  // ~imr, precomputed for cheap bit tests
+    uint8_t isr;   // in-service register — which interrupt is currently being handled
+    uint8_t isrr;  // ~isr, precomputed for cheap bit tests
+    uint8_t active_irq;
+    uint8_t vector_base;
+    // ...
+};
+
+PIC_Controller pics[2]; // master and slave
+```
+
+Those three registers — IRR, IMR, ISR — are the entire state of a real 8259, and DOSBox-X models them with the exact same names and semantics a hardware datasheet would use: IRR tracks which lines currently want service, IMR tracks which lines the guest has explicitly disabled (masked), and ISR tracks which single interrupt is currently being serviced, so a lower-priority IRQ can't preempt one already in progress.
+
+The cascade wiring that makes two chips behave as one has its own history baked into DOSBox-X's source. The original IBM PC shipped with one 8259, handling 8 lines. The AT added a second, "slave" 8259 whose single output is wired into one input line (traditionally IRQ2) of the first, "master" 8259 — a cascade that lets 15 usable lines (8 + 8, minus the one the slave consumes on the master) share a single path into the CPU. DOSBox-X reproduces this exactly, and even reproduces one of its more infamous historical quirks: because the AT's cascade wiring repurposed the master's IRQ2 line for the slave chip, but plenty of existing software still expected IRQ2 to mean what it meant on the original PC/XT, `PIC_ActivateIRQ()` transparently remaps requests for IRQ2 onto IRQ9 instead, so the guest sees exactly the substitution real AT hardware performed:
+
+```cpp
+void PIC_ActivateIRQ(Bitu irq) {
+    ...
+    else if (enable_slave_pic) { /* PC/AT emulation with slave PIC cascade to master */
+        if (irq == 2) irq = 9;
+    }
+    ...
+    Bitu t = irq>7 ? (irq - 8): irq;
+    PIC_Controller * pic=&pics[irq>7 ? 1 : 0];
+    pic->raise_irq(t);
+}
+```
+
+This is a small, almost trivia-sized detail, but it's a good early signal of something this book will keep running into: DOSBox-X isn't just modeling "an interrupt controller" as an abstract concept. It's modeling the specific, sometimes historically awkward wiring decisions IBM made, because DOS-era software occasionally depends on the awkwardness itself.
+
+Early PC programmers occasionally discovered the IRQ2/IRQ9 substitution the hard way. Well-behaved software installed handlers for both vectors or chained them together, while less portable software simply assumed IRQ2 always existed as a physical line. DOSBox-X preserves the remapping because enough software from the era accidentally depended on IBM's compatibility workaround.
+
+On a BIOS-initialized AT, DOSBox-X defaults to the familiar `0x08` and `0x70` vector bases for the master and slave PICs, so that IRQ0 (the timer) becomes interrupt vector `0x08`, and IRQ8 (the real-time clock) becomes vector `0x70` — the familiar `INT 8h`/`INT 70h` numbers that BIOS documentation quotes, computed here from nothing more than a base value plus a line number. (Later operating systems, particularly protected-mode OSes, routinely remap these bases — but for ordinary DOS software, the BIOS defaults are the numbers that matter.)
+
+<Diagram src="pic8259-state-machine.svg" />
+
+## 8.3 Life of a Timer Tick {#life-of-a-timer-tick}
+
+@chapter(main-loop-and-event-scheduler) already introduced the pieces that make the next sequence possible — `PIC_AddEvent()`, the event queue, `PIC_RunQueue()` — but stopped short of the part where an interrupt actually reaches the CPU. Now those pieces connect.
+
+Imagine the PIT's channel 0 counter reaching zero:
+
+1. **The PIT expires.** A device module — the PIT, in this case — decides an IRQ should fire and calls `PIC_ActivateIRQ(0)`.
+2. **IRR bit set.** That call resolves to `pics[0].raise_irq(0)`, which sets the corresponding bit in the master PIC's **IRR** — the request is now recorded, but nothing about the CPU's execution has changed yet.
+3. **`PIC_IRQCheck` raised.** An internal flag (`PIC_IRQCheck`) is set, signalling to the scheduler that there is pending work.
+4. **`PIC_runIRQs()` executes.** `PIC_runIRQs()` is the handshake point between DOSBox-X's event scheduler and its CPU emulation. @chapter(main-loop-and-event-scheduler)'s event queue can accumulate work indefinitely, but an interrupt does not become visible to the guest until the CPU reaches a point where `PIC_runIRQs()` determines it is legal to deliver one. Somewhere later — potentially the very next time the scheduler from @chapter(main-loop-and-event-scheduler) turns over — `PIC_runIRQs()` runs. This is the function that actually decides whether *now* is a moment the CPU is willing to accept an interrupt:
+
+```cpp
+void PIC_runIRQs(void) {
+    if (!GETFLAG(IF)) return;             // guest has interrupts disabled — wait
+    if (GCC_UNLIKELY(!PIC_IRQCheck)) return;
+    if (GCC_UNLIKELY(CPU_NMI_active)) return;
+    ...
+    const uint8_t p = (master.irr & master.imrr)&master.isrr;
+    ...
+    for (i = 0,s = 1;i < max;i++, s<<=1){
+        if (p&s) {
+            if ((int)i == master_cascade_irq) {
+                slave_startIRQ();
+            } else {
+                master_startIRQ(i);
+            }
+            break;
+        }
+    }
+    ...
+}
+```
+
+`master.irr & master.imrr & master.isrr` is the whole priority scheme compressed into one bitwise AND: a line only qualifies if it's currently requested (`irr`), not masked off (`imrr`, the pre-inverted mask), and not already being serviced by something of equal or higher priority (`isrr`). `GETFLAG(IF)` is the guest's own interrupt flag — so a handler that hasn't gotten around to re-enabling interrupts yet correctly blocks new ones from arriving mid-handler, exactly as real 8259-driven hardware behaves.
+
+Notice that the loop walks IRQs from lowest numbered bit to highest. This isn't an implementation accident: on the original 8259, lower numbered IRQs have higher priority. IRQ0 (the timer) outranks IRQ1 (keyboard), which outranks IRQ3 (serial ports), and so on. DOSBox-X reproduces the same priority scheme simply by scanning the bits in the same order the hardware did. The AT complicates this picture slightly. IRQs 8–15 live on the slave PIC, whose output is connected to the master's IRQ2 line. From the master's point of view, every interrupt originating on the slave therefore arrives as "IRQ2 first, something else second." DOSBox-X preserves this by checking `master_cascade_irq` before continuing the normal priority scan.
+
+5. **`master_startIRQ()`.** Once a qualifying line is found, `master_startIRQ(i)` (or the slave/cascade equivalent for IRQ8–15) marks the interrupt as in-service and hands off:
+
+```cpp
+static void inline master_startIRQ(Bitu i){
+    master.start_irq(i);
+    CPU_HW_Interrupt(master.vector_base + i);
+}
+```
+
+6. **`CPU_HW_Interrupt(0x08)`.** This call — `CPU_HW_Interrupt(0x08)` — is the bridge from the PIC's world to the CPU's. The CPU pushes flags, `CS`, and `IP`, clears `IF`, and jumps through IVT entry 8, into whatever handler DOS or the BIOS installed there.
+7. **BIOS handler runs.** The guest's handler executes — updating the system timer count, calling `INT 1Ch` for user-installed tick handlers, and eventually writing to the PIC's command port.
+8. **Guest sends EOI.** That write to port `0x20` (master) or `0xA0` (slave) signals **End Of Interrupt**:
+
+```cpp
+} else {    // OCW2 issued
+    if (val&0x20) {     // EOI commands
+        if (val&0x40) {     // specific EOI
+            pic->isr &= ~(1<< (val-0x60));
+            ...
+            pic->check_after_EOI();
+        } else {        // nonspecific EOI
+            ...
+```
+
+9. **PIC clears ISR.** The corresponding bit in the in-service register is cleared, and the PIC signals that a same- or lower-priority interrupt can be serviced again.
+
+A handler that forgets the EOI step doesn't crash outright — but every subsequent interrupt at that priority level or below stays permanently blocked, because `ISR` never clears. This is one of the more common ways badly-written or buggy DOS-era interrupt handlers actually misbehave, and it's a direct, mechanical consequence of the same bitwise state this section just walked through, not a mysterious hang.
+
+## 8.4 Software Interrupts: The Guest Interrupts Itself {#software-interrupts-the-guest-interrupts-itself}
+
+The PIT tick in the previous section traced a path from hardware through the PIC to the CPU. But the machine has a second, entirely different way an interrupt can happen: the guest program can simply ask for one.
+
+```asm
+INT 21h
+INT 10h
+INT 13h
+```
+
+These three instructions — DOS API, BIOS video services, BIOS disk services — account for a substantial fraction of all software interrupts in real DOS programs. From the guest's point of view, each one is a deliberate transfer of control: push flags and return address, look up vector `num` in the IVT, and jump. But from DOSBox-X's point of view, the only difference between a PIT tick and `INT 21h` is who initiated the interruption. One comes from a piece of hardware; the other comes from the currently executing instruction stream.
+
+The interpreter handles `INT` in `src/cpu/core_normal/` by calling `CPU_SW_Interrupt()` instead of `CPU_HW_Interrupt()`. The dynamic recompiler compiles `INT` directly, rather than falling back to the interpreter for it: on encountering opcode `0xcd`, both the older `core_dyn_x86` and the newer `core_dynrec` decoders emit an inline call straight to `CPU_Interrupt()` itself (with the `CPU_INT_SOFTWARE` flag already baked in) and end the translated block there. So `INT` is actually one of the more direct paths through the JIT, not a deoptimization — the compiled code calls the exact same dispatch function the interpreter calls, it just gets there by a generated call instead of an interpreted one.
+
+There's a further wrinkle even within "software interrupt": `INT 21h` and friends (opcode `0xcd`) go through the plain `CPU_SW_Interrupt()` wrapper shown below, but `INT3` and `INTO` go through a third, related wrapper — `CPU_SW_Interrupt_NoIOPLCheck()` — that skips a check the other two are subject to. That check, visible in `CPU_Interrupt()`'s protected-mode branch (@section(interrupts-exceptions-pic/the-shared-destination-cpu-interrupt)), rejects a software interrupt in virtual-8086 mode unless the guest's IOPL is maxed out; `INT3` and `INTO` are exempted from it because they're breakpoint/overflow traps, not general-purpose service calls, and V86 debuggers need them to work unconditionally.
+
+## 8.5 The Shared Destination: `CPU_Interrupt()` {#the-shared-destination-cpu-interrupt}
+
+Three thin wrapper functions in `include/cpu.h` make the "multiple callers, one mechanism" idea explicit in the source itself:
+
+```cpp
+static INLINE void CPU_HW_Interrupt(Bitu num) {
+    CPU_Interrupt(num,0,reg_eip);
+}
+static INLINE void CPU_SW_Interrupt(Bitu num,uint32_t oldeip) {
+    CPU_Interrupt(num,CPU_INT_SOFTWARE,oldeip);
+}
+static INLINE void CPU_SW_Interrupt_NoIOPLCheck(Bitu num,uint32_t oldeip) {
+    CPU_Interrupt(num,CPU_INT_SOFTWARE|CPU_INT_NOIOPLCHECK,oldeip);
+}
+```
+
+A hardware interrupt calls `CPU_HW_Interrupt()` with a type of `0`; an ordinary software `INT` calls `CPU_SW_Interrupt()` with `CPU_INT_SOFTWARE` set; `INT3`/`INTO` call the `NoIOPLCHECK` variant of the same thing; exceptions (covered in @section(interrupts-exceptions-pic/exceptions-when-the-cpu-objects)) call `CPU_Interrupt()` directly with `CPU_INT_EXCEPTION`, and sometimes `CPU_INT_HAS_ERROR` alongside it. All of these land in the same function, and — skipping past a long stretch of DOS-compatibility special-casing in the real source that this book won't dwell on — the core of what happens next, for real-mode DOS (the overwhelmingly common case for the software this emulator runs), is almost startlingly small:
+
+```cpp
+if (!cpu.pmode) {
+    /* Save everything on a 16-bit stack */
+    CPU_Push16(reg_flags & 0xffff);
+    CPU_Push16(SegValue(cs));
+    CPU_Push16(oldeip);
+    SETFLAGBIT(IF,false);
+    SETFLAGBIT(TF,false);
+    /* Get the new CS:IP from vector table */
+    PhysPt base=cpu.idt.GetBase();
+    reg_eip=mem_readw((PhysPt)(base+(num << 2)));
+    Segs.val[cs]=mem_readw((PhysPt)(base+(num << 2)+2));
+    Segs.phys[cs]=(PhysPt)Segs.val[cs] << 4u;
+    if (!cpu_allow_big16) cpu.code.big=false;
+    return;
+}
+```
+
+That's the whole real-mode mechanism, but it moves fast enough on the page that it's worth pausing on visually before walking through it line by line. The figure below traces the same four steps this code performs — table lookup, the two memory reads, the segment-load shift, and the control transfer that follows — laid out as a single path from IVT entry to running handler:
+
+<Diagram src="ivt-lookup-diagram.svg" />
+
+*Every call site that reaches `CPU_Interrupt()` runs this same real-mode branch. The bottom row shows the four distinct, named callers this book has introduced by name so far; @section(interrupts-exceptions-pic/three-reasons-to-interrupt-one-mechanism-or-is-it-four) adds a fifth the diagram flags but doesn't detail, since it hasn't been introduced yet at this point in the chapter.*
+
+One thing worth flagging honestly about that bottom row before moving on: `CPU_Exception()` appears in it, but this section's own code above only names three wrapper functions (`CPU_HW_Interrupt()`, `CPU_SW_Interrupt()`, `CPU_SW_Interrupt_NoIOPLCheck()`) — exceptions don't get their own entry until @section(interrupts-exceptions-pic/exceptions-when-the-cpu-objects). The figure is showing where this chapter is headed, not just where it's been; by the time you reach the end of @section(interrupts-exceptions-pic/three-reasons-to-interrupt-one-mechanism-or-is-it-four), every box in that row (and the NMI path noted beneath it) will have been traced individually. For now, the prose picks back up exactly where the code above leaves off:
+
+This is the real-mode Interrupt Vector Table (IVT) mechanism exactly as any DOS programming reference describes it, and it's worth walking through slowly because every piece of it connects to something earlier in this book:
+
+- `cpu.idt.GetBase()` gives the base address of the interrupt vector table — `0x00000` in ordinary real mode, four bytes per vector.
+- `base + (num << 2)` computes the address of vector `num`'s entry — this is @chapter(memory-model-and-address-translation)'s segmentation arithmetic showing up again, just applied to table indexing instead of a `far` pointer.
+- The two `mem_readw()` calls that follow are the same memory path every other chapter in this book has gone through — the fetched offset and segment are ordinary guest memory reads, dispatched through the TLB and `PageHandler` machinery exactly as any other read would be.
+- `Segs.phys[cs] = Segs.val[cs] << 4u` is the identical real-mode segment-load shift from @section(memory-model-and-address-translation/segment-registers-in-dosbox-x-segs-phys) — the CPU is, in effect, performing a far jump to whatever address the guest's own interrupt vector table says it should, and that jump gets cached into `Segs.phys[cs]` the same way any other segment load does.
+- `SETFLAGBIT(IF,false)` clears the interrupt flag on entry — while this handler runs, further hardware interrupts are held off, which is exactly the behavior real DOS interrupt handlers are written to expect, and exactly why a handler that runs too long risks losing events from devices that can't wait.
+
+The protected-mode branch this real-mode block sits beside (not shown above) is also where the IOPL check from @section(interrupts-exceptions-pic/software-interrupts-the-guest-interrupts-itself) actually lives — a software interrupt arriving while the CPU is in virtual-8086 mode is rejected with a `#GP` unless the flag word's IOPL bits are maxed out, *unless* the caller set `CPU_INT_NOIOPLCHECK`. That single flag is the entire difference between `INT 21h` and `INT3` as far as `CPU_Interrupt()` is concerned.
+
+After several sections spent following completely different paths through the machine, DOSBox-X finally reveals that all roads lead to the same destination. Everything that makes an interrupt "special" — the fact that control can be redirected asynchronously, from outside the normal instruction stream — is handled by the three pushes and the flag clear. Everything about *where* control goes is just an ordinary table lookup followed by an ordinary segment load, using machinery this book already built.
+
+## 8.6 Exceptions: When The CPU Objects {#exceptions-when-the-cpu-objects}
+
+Hardware interrupts are the outside world interrupting the CPU. Software interrupts are the guest interrupting itself. Exceptions are the CPU interrupting its own execution.
+
+`CPU_Exception()` is the entry point:
+
+```cpp
+void CPU_Exception(Bitu which, Bitu error) {
+    ...
+    CPU_Interrupt(which, CPU_INT_EXCEPTION | ((which>=8) ? CPU_INT_HAS_ERROR : 0), reg_eip);
+}
+```
+
+@chapter(interpreter-core) already showed you one call site for this without dwelling on where it led: the interpreter's opcode `switch` statement, on hitting a byte it doesn't recognize as a valid instruction, calls `CPU_Exception(6, 0)` — exception vector 6 is `#UD`, invalid opcode.
+
+The notable exceptions that a real-mode DOS program can encounter include:
+
+- **`#DE` (vector 0)** — raised by `DIV`/`IDIV` in two distinct situations: a zero divisor, or a quotient that doesn't fit the destination register. Both cases hit the identical `EXCEPTION(0)` call inside the `DIVW`/`IDIVW`/`DIVD`/`IDIVD` macros — the CPU doesn't distinguish "you divided by zero" from "your quotient overflowed" at the exception-vector level; both just mean "this `DIV` can't produce a valid result."
+- **`#UD` (vector 6)** — invalid opcode, raised when the instruction byte at `CS:EIP` doesn't name any known instruction.
+- **`#GP` (vector 13)** — general protection fault, the exception that dominates protected-mode operation but can also appear in real mode on some 286+ systems.
+- **`#PF` (vector 14)** — page fault, only meaningful when paging is enabled, but central to any protected-mode operating system DOSBox-X supports.
+
+In real mode, these exceptions all route into `CPU_Interrupt()` and take exactly the same IVT lookup and segment-load path any hardware IRQ or software `INT` would. The `CPU_INT_EXCEPTION` flag exists mainly to let `CPU_Interrupt()` distinguish, internally, whether it needs to push an error code onto the stack afterward (`which>=8`, `CPU_INT_HAS_ERROR`) — a detail that matters far more in protected mode than in the real-mode DOS software this book spends most of its time on, but the dispatch mechanism underneath doesn't fork into a separate code path to accommodate it.
+
+The fact that `CPU_Interrupt()` contains considerably more code for protected mode than for real mode is another reminder that DOSBox-X is ultimately emulating an x86 PC, not merely DOS. The same function eventually has to satisfy a 1981 IBM PC, a DOS extender running under DPMI, and a protected-mode operating system expecting privilege checks and stack switches to behave exactly as Intel documented.
+
+### What happens when an exception can't be delivered cleanly {#what-happens-when-an-exception-can-t-be-delivered-cleanly}
+
+The `...` in `CPU_Exception()`'s listing above is hiding one of the more dramatic pieces of machinery in the whole CPU core: what happens when raising one exception causes another. Real x86 hardware answers this with double and triple faults, and DOSBox-X reproduces the escalation exactly:
+
+- Every exception vector has a re-entrancy counter, `CPU_Exception_Level[which]`. If `CPU_Exception()` is called for a vector that's already being handled — meaning something went wrong *while delivering* the first exception — DOSBox-X doesn't retry the original vector. It substitutes `EXCEPTION_DF` (`#DF`, vector 8, double fault) and clears the error code, exactly the substitution real silicon performs.
+- If a *double* fault is raised while a double fault is already in progress, that's a triple fault — historically the condition that makes real x86 hardware reset itself, because the CPU has nowhere left to push a stack frame. DOSBox-X's code comment says as much: *"Sickening, I know, but that's how IBM wired things a long long time ago."* The emulator calls `On_Software_CPU_Reset()` and never returns from `CPU_Exception()` at all.
+- Page faults and general protection faults get special dispensation to nest one level deep even with this machinery active (`CPU_Exception_Level[which]` is decremented again once the fault handler returns), which the source notes is required for recursive page faults under multitasking guests like Windows 95.
+
+None of this is reachable from ordinary real-mode DOS software — a DOS program doesn't have the protected-mode machinery to trigger nested faults in the first place — but it's a good example of the same theme as the IRQ2/IRQ9 remap in @section(interrupts-exceptions-pic/the-hardware-answer-the-8259-pic): DOSBox-X isn't emulating "an exception mechanism" as an abstraction, it's emulating the specific, sometimes brutal fallback behavior real Intel silicon was wired to perform.
+
+## 8.7 Three Reasons To Interrupt, One Mechanism — Or Is It Four? {#three-reasons-to-interrupt-one-mechanism-or-is-it-four}
+
+The IBM PC was designed as a collection of largely independent subsystems connected by interrupts. DOSBox-X preserves that architecture so faithfully that the emulator itself eventually arrives at the same conclusion IBM's engineers did in 1981: regardless of who requested attention, an interrupt is ultimately just a saved execution context and a jump through a table.
+
+A hardware IRQ, a guest `INT 21h`, and a CPU-detected fault are, from the guest program's point of view, three completely different kinds of event — one arrives from a device asynchronously, one is a deliberate request, one is the CPU objecting to something the program itself just did. DOSBox-X doesn't give each of them a separate delivery mechanism. All three converge on `CPU_Interrupt()`, which does the same three pushes, the same flag clear, and the same IVT lookup regardless of which of the three callers showed up — the *only* thing that changes between them is how execution arrives at that shared function and which type flags it carries in.
+
+There's actually a fourth caller the earlier sections have been quietly stepping around. `PIC_runIRQs()`, quoted in @section(interrupts-exceptions-pic/life-of-a-timer-tick), checks `CPU_NMI_active` before doing anything else — the Non-Maskable Interrupt, the one line on a real PC that bypasses the 8259 entirely and can't be masked off by `IF`. DOSBox-X's `CPU_NMI_Interrupt()` handles it by calling `CPU_Interrupt(2, 0, reg_eip)` — vector 2, the same `type=0` a hardware IRQ uses. As far as `CPU_Interrupt()` is concerned, an NMI *is* a hardware interrupt; the only thing distinguishing it is that it arrives through its own pending/active flags instead of the PIC's IRR, and that nothing can mask it off along the way. So the honest count isn't three reasons converging on one mechanism — it's (at least) four, and the source code doesn't even bother giving the fourth one a distinct type flag.
+
+This is the path the figure in @section(interrupts-exceptions-pic/the-shared-destination-cpu-interrupt) flagged in its footnote without explaining — every box in that diagram, and the NMI note beneath it, has now been traced back to a real call site.
+
+That's worth putting next to @chapter(dosbox-x-architecture)'s account of how DOSBox-X's modules communicate generally: interrupts were one of the five mechanisms named there, described in the abstract as "how a PIT tick becomes a timer interrupt the DOS kernel's clock services rely on." This chapter has now shown the concrete machinery behind that one sentence — and, not entirely coincidentally, shown that "interrupt" turns out to be the same mechanism DOS software's own `INT 21h` calls, the CPU's own fault reporting, and even the one interrupt line hardware itself can't disable all quietly reuse as well. Several very different reasons to interrupt the CPU; one function that doesn't need to know which reason it's handling.
+
+With the IVT lookup itself now fully explained, the next chapter can finally follow one specific vector all the way to what real code sits behind it — and there's no vector more heavily traveled in DOS-era software than `INT 21h`.
+
+---
+
+*Next: @chapter(vga-emulation) — VGA/SVGA Emulation, where we leave the interrupt-dispatch machinery behind and follow a guest program's writes to segment `0xA000` down to the register-level graphics hardware DOS software always assumed it could reach directly.*

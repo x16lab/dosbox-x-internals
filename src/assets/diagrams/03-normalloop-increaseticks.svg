@@ -1,0 +1,304 @@
+<svg viewBox="0 0 1300 1740" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Normal_Loop and increaseticks()</title>
+<desc>The CPU decode loop and the tick-scheduling/retuning function that hands control back to it. Every exit from increaseticks() funnels back to PIC_RunQueue() at the top of Normal_Loop.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+
+    --box-bg: #f3f4f6;
+    --box-border: #9ca3b8;
+    --box-text: #374151;
+
+    --incr-bg: #eff6ff;
+    --incr-border: #3b82f6;
+    --incr-label: #1d4ed8;
+
+    --scn-steady: #3b82f6;   /* Scenario A: steady state */
+    --scn-catchup: #f59e0b;  /* Scenario B: catch-up */
+    --scn-hlt: #8b5cf6;      /* Scenario C: HLT/idle */
+    --scn-fixed: #0d9488;    /* Scenario D: fixed cycles */
+    --scn-turbo: #ef4444;    /* Scenario E: turbo/FF */
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-bg: #3a2413;
+    --orange-border: #fb923c;
+    --orange-label: #fdba74;
+    --orange-code: #fed7aa;
+    --orange-footnote: #fdba74;
+
+    --box-bg: #1f2937;
+    --box-border: #94a3b8;
+    --box-text: #e5e7eb;
+
+    --incr-bg: #1e2a5f;
+    --incr-border: #60a5fa;
+    --incr-label: #93c5fd;
+
+    --scn-steady: #60a5fb;   /* Scenario A: steady state */
+    --scn-catchup: #f59e0b;  /* Scenario B: catch-up */
+    --scn-hlt: #a78bfa;      /* Scenario C: HLT/idle */
+    --scn-fixed: #269d96;    /* Scenario D: fixed cycles */
+    --scn-turbo: #f87171;    /* Scenario E: turbo/FF */
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+}
+
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+.code { font-family: Consolas, Menlo, monospace; }
+.decision { stroke-dasharray: 5 3; }
+</style>
+</defs>
+
+<text x="650" y="36" text-anchor="middle" fill="var(--fg-title)" font-size="20" font-weight="700">Normal_Loop ↔ increaseticks()</text>
+<text x="650" y="72" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13">Every exit from increaseticks() funnels back to PIC_RunQueue() at the top of Normal_Loop.</text>
+
+<!-- ============ NORMAL_LOOP SECTION ============ -->
+
+<!-- N1: PIC_RunQueue() decision -->
+<rect class="decision" x="280" y="150" width="440" height="90" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="182" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">PIC_RunQueue()</text>
+<text x="500" y="202" text-anchor="middle" fill="var(--box-text)" font-size="12">budget left this ms?</text>
+
+<!-- N2: cpudecoder (green) -->
+<rect x="820" y="150" width="360" height="90" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+<text x="844" y="176" fill="var(--green-label)" font-size="15" font-weight="700">cpudecoder() executes</text>
+<text x="844" y="196" class="code" fill="var(--green-code)" font-size="12">ret = (*cpudecoder)()</text>
+<text x="844" y="214" fill="var(--green-note)" font-size="11">NMI check; callback dispatch if ret&gt;0 (dosbox.cpp:471-490)</text>
+
+<line x1="720" y1="180" x2="820" y2="180" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="750" y="172" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">yes</text>
+
+<line x1="820" y1="214" x2="720" y2="214" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="770" y="206" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">loop</text>
+
+<line x1="500" y1="240" x2="500" y2="272" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="530" y="260" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no</text>
+
+<!-- N3: ticksRemain > 0 decision -->
+<rect class="decision" x="280" y="272" width="440" height="90" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="304" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">ticksRemain &gt; 0, not paused?</text>
+<text x="500" y="324" text-anchor="middle" fill="var(--box-text)" font-size="12">dosbox.cpp:516</text>
+
+<!-- N4: TIMER_AddTick (indigo) -->
+<rect x="820" y="272" width="360" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="844" y="298" fill="var(--indigo-label)" font-size="15" font-weight="700">TIMER_AddTick()</text>
+<text x="844" y="318" class="code" fill="var(--indigo-code)" font-size="12">PIC_Ticks++; CPU_CycleLeft += CPU_CycleMax</text>
+<text x="844" y="336" fill="var(--indigo-note)" font-size="11">ticksRemain-- (dosbox.cpp:517-518)</text>
+
+<line x1="720" y1="302" x2="820" y2="302" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="750" y="294" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">yes</text>
+<text x="750" y="312" text-anchor="middle" fill="var(--scn-steady)" font-size="10" font-weight="700">drain N× TIMER_AddTick()</text>
+
+<path d="M1180,317 L1240,317" fill="none" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<circle cx="1240" cy="317" r="3" fill="var(--indigo-border)"/>
+
+<line x1="500" y1="362" x2="500" y2="394" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="530" y="382" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no</text>
+
+<!-- N5: increaseticks() pointer (orange) -->
+<rect x="280" y="394" width="440" height="70" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+<text x="500" y="424" text-anchor="middle" fill="var(--orange-label)" font-size="15" font-weight="700">increaseticks()</text>
+<text x="500" y="446" text-anchor="middle" fill="var(--orange-footnote)" font-size="12">↓ retuning logic — §3.9 (below); dosbox.cpp:520-521</text>
+
+<line x1="500" y1="464" x2="500" y2="500" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ============ INCREASETICKS() SECTION ============ -->
+
+<!-- Container grouping all increaseticks() interior boxes -->
+<rect class="incr-container" x="235" y="475" width="1050" height="1065"
+      rx="14" ry="14"
+      fill="var(--incr-bg)" fill-opacity="0.12"
+      stroke="var(--incr-border)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1190" y="495" fill="var(--incr-label)" font-size="12" font-weight="700">increaseticks()</text>
+<!-- E1: ticksLocked (Turbo decision) -->
+<rect class="decision" x="280" y="500" width="440" height="100" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="536" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">ticksLocked (Turbo/FF)?</text>
+<text x="500" y="558" text-anchor="middle" fill="var(--box-text)" font-size="12">dosbox.cpp:569</text>
+
+<!-- E1a: Fast-forward reset (orange) -->
+<rect x="820" y="500" width="360" height="100" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+<text x="844" y="526" fill="var(--orange-label)" font-size="15" font-weight="700">Fast-forward reset</text>
+<text x="844" y="546" class="code" fill="var(--orange-code)" font-size="12">ticksRemain=5; ticksLast=GetTicks()</text>
+<text x="844" y="564" fill="var(--orange-footnote)" font-size="11">ticksAdded=ticksDone=ticksScheduled=0</text>
+<text x="844" y="582" fill="var(--orange-footnote)" font-size="11">dosbox.cpp:570-575</text>
+
+<line x1="720" y1="545" x2="820" y2="545" stroke="var(--orange-border)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="750" y="537" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">yes</text>
+<text x="750" y="554" text-anchor="middle" fill="var(--scn-turbo)" font-size="10" font-weight="700">§3.9 E (turbo)</text>
+
+<path d="M1180,565 L1240,565" fill="none" stroke="var(--orange-border)" stroke-width="1.5"/>
+<circle cx="1240" cy="565" r="3" fill="var(--orange-border)"/>
+
+<line x1="500" y1="600" x2="500" y2="632" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="530" y="620" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no</text>
+
+<!-- E2: measure() (indigo) -->
+<rect x="280" y="632" width="440" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="304" y="658" fill="var(--indigo-label)" font-size="15" font-weight="700">MEASURE</text>
+<text x="304" y="678" class="code" fill="var(--indigo-code)" font-size="13">ticksNew=GetTicks(); ticksScheduled+=ticksAdded</text>
+<text x="304" y="698" fill="var(--indigo-note)" font-size="12">always accumulates the prior tick — dosbox.cpp:579-580</text>
+
+<line x1="500" y1="722" x2="500" y2="754" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- E3: ticksNew <= ticksLast decision -->
+<rect class="decision" x="280" y="754" width="440" height="100" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="790" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">ticksNew ≤ ticksLast?</text>
+<text x="500" y="812" text-anchor="middle" fill="var(--box-text)" font-size="12">dosbox.cpp:582</text>
+
+<!-- E3a: sleep & rebalance (indigo) -->
+<rect x="820" y="754" width="360" height="100" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="844" y="780" fill="var(--indigo-label)" font-size="15" font-weight="700">Sleep &amp; rebalance</text>
+<text x="844" y="800" class="code" fill="var(--indigo-code)" font-size="12">wrap_delay(1), or jitter pattern</text>
+<text x="844" y="818" fill="var(--indigo-note)" font-size="11">ticksAdded=0; ticksDone-=timeslept (≥0)</text>
+<text x="844" y="836" fill="var(--indigo-note)" font-size="11">dosbox.cpp:583-608</text>
+
+<line x1="720" y1="804" x2="820" y2="804" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="750" y="796" text-anchor="middle" fill="var(--arrow)" font-size="11" font-style="italic">yes</text>
+<text x="750" y="812" text-anchor="middle" fill="var(--scn-steady)" font-size="10" font-weight="700">§3.9 A (steady)</text>
+<text x="750" y="828" text-anchor="middle" fill="var(--scn-hlt)" font-size="10" font-weight="700">§3.9 C (idle)</text>
+
+<path d="M1180,818 L1240,818" fill="none" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<circle cx="1240" cy="818" r="3" fill="var(--indigo-border)"/>
+
+<line x1="500" y1="854" x2="500" y2="886" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="530" y="874" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no</text>
+
+<!-- E4: schedule() (indigo) -->
+<rect x="280" y="886" width="440" height="130" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="304" y="912" fill="var(--indigo-label)" font-size="15" font-weight="700">SCHEDULE</text>
+<text x="304" y="932" class="code" fill="var(--indigo-code)" font-size="12">ticksRemain = ticksNew − ticksLast (× speed)</text>
+<text x="304" y="950" class="code" fill="var(--indigo-code)" font-size="12">ticksLast=ticksNew; ticksDone+=ticksRemain</text>
+<text x="304" y="968" class="code" fill="var(--indigo-code)" font-size="12">cap ticksRemain≤20; ticksAdded=ticksRemain</text>
+<text x="304" y="990" fill="var(--indigo-note)" font-size="11">ticksDone gets the UNcapped value — dosbox.cpp:613-630</text>
+
+<line x1="500" y1="1016" x2="500" y2="1048" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="530" y="1032" text-anchor="start" fill="var(--scn-catchup)" font-size="10" font-weight="700">§3.9 B (catch-up)</text>
+
+<!-- E5: cycles=auto decision -->
+<rect class="decision" x="280" y="1048" width="440" height="90" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="1080" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">cycles=auto active?</text>
+<text x="500" y="1100" text-anchor="middle" fill="var(--box-text)" font-size="12">dosbox.cpp:633</text>
+
+<path d="M720,1093 L1240,1093" fill="none" stroke="var(--arrow)" stroke-width="1.5"/>
+<circle cx="1240" cy="1093" r="3" fill="var(--arrow)"/>
+<text x="740" y="1085" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no → return</text>
+<text x="740" y="1100" text-anchor="start" fill="var(--scn-fixed)" font-size="10" font-weight="700">§3.9 D (fixed cycles)</text>
+
+<line x1="500" y1="1138" x2="500" y2="1170" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="530" y="1158" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">yes</text>
+
+<!-- E6: retune window decision -->
+<rect class="decision" x="280" y="1170" width="440" height="110" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="1200" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">retune window?</text>
+<text x="500" y="1220" text-anchor="middle" class="code" fill="var(--box-text)" font-size="11">sched≥250 ∨ done≥250 ∨</text>
+<text x="500" y="1236" text-anchor="middle" class="code" fill="var(--box-text)" font-size="11">(added&gt;15 ∧ sched≥5)</text>
+<text x="500" y="1256" text-anchor="middle" fill="var(--box-text)" font-size="11">dosbox.cpp:636</text>
+
+<!-- E7: RETUNE (orange) -->
+<rect x="820" y="1170" width="360" height="190" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+<text x="844" y="1196" fill="var(--orange-label)" font-size="15" font-weight="700">RETUNE CPU_CycleMax — §3.9</text>
+<text x="844" y="1216" class="code" fill="var(--orange-code)" font-size="12">ratio ≈ sched×921 / done</text>
+<text x="844" y="1234" fill="var(--orange-footnote)" font-size="11">(90% of CPU_CyclePercUsed; default 100%)</text>
+<text x="844" y="1250" fill="var(--orange-footnote)" font-size="11">minus CPU_IODelayRemoved ratio</text>
+<text x="844" y="1266" fill="var(--orange-footnote)" font-size="11">blend: small-ratio / large-ratio formula</text>
+<text x="844" y="1282" fill="var(--orange-footnote)" font-size="11">applied only if ratio &gt; 10</text>
+<text x="844" y="1298" fill="var(--orange-footnote)" font-size="11">always resets done/sched/IODelay=0</text>
+<text x="844" y="1318" fill="var(--orange-footnote)" font-size="11">dosbox.cpp:636-706</text>
+
+<line x1="720" y1="1225" x2="820" y2="1225" stroke="var(--orange-border)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="750" y="1217" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">yes</text>
+<text x="750" y="1232" text-anchor="middle" fill="var(--scn-steady)" font-size="10" font-weight="700">§3.9 A/B (retune)</text>
+
+<path d="M1180,1265 L1240,1265" fill="none" stroke="var(--orange-border)" stroke-width="1.5"/>
+<circle cx="1240" cy="1265" r="3" fill="var(--orange-border)"/>
+
+<line x1="500" y1="1280" x2="500" y2="1392" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="520" y="1338" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no</text>
+
+<!-- E8: ticksAdded > 15 decision -->
+<rect class="decision" x="280" y="1392" width="440" height="100" rx="12" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="500" y="1428" text-anchor="middle" fill="var(--box-text)" font-size="14" font-weight="700">ticksAdded &gt; 15?</text>
+<text x="500" y="1450" text-anchor="middle" fill="var(--box-text)" font-size="12">dosbox.cpp:709</text>
+
+<!-- E9: Emergency slowdown (orange) -->
+<rect x="820" y="1392" width="360" height="100" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+<text x="844" y="1420" fill="var(--orange-label)" font-size="15" font-weight="700">Emergency slowdown</text>
+<text x="844" y="1440" class="code" fill="var(--orange-code)" font-size="12">CPU_CycleMax /= 3 (floor at limit)</text>
+<text x="844" y="1458" fill="var(--orange-footnote)" font-size="11">accumulators NOT reset</text>
+<text x="844" y="1476" fill="var(--orange-footnote)" font-size="11">dosbox.cpp:709-714</text>
+
+<line x1="720" y1="1442" x2="820" y2="1442" stroke="var(--orange-border)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="750" y="1434" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">yes</text>
+<text x="750" y="1450" text-anchor="middle" fill="var(--scn-catchup)" font-size="10" font-weight="700">§3.9 B (emergency cut)</text>
+
+<path d="M1180,1458 L1240,1458" fill="none" stroke="var(--orange-border)" stroke-width="1.5"/>
+<circle cx="1240" cy="1458" r="3" fill="var(--orange-border)"/>
+
+<path d="M500,1492 L500,1514 L1240,1514" fill="none" stroke="var(--arrow)" stroke-width="1.5"/>
+<circle cx="1240" cy="1514" r="3" fill="var(--arrow)"/>
+<text x="520" y="1508" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no — nothing happens</text>
+
+<!-- Shared return corridor: every exit funnels back into N1 -->
+<path d="M1240,1514 L1240,110 L600,110 L600,150" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+<!-- Footer -->
+<line x1="280" y1="1554" x2="720" y2="1554" stroke="var(--footer-line)"/>
+
+<!-- Scenario legend -->
+<text x="280" y="1568" fill="var(--footer-text)" font-size="11" font-weight="700">Scenarios from §3.9:</text>
+<text x="420" y="1568" fill="var(--scn-steady)" font-size="11" font-weight="700">A Steady | B Catch-up | C Idle | D Fixed | E Turbo</text>
+
+<text x="500" y="1580" text-anchor="middle" fill="var(--orange-label)" font-size="14" font-weight="700">Every exit re-checks the budget — it doesn't mean idle.</text>
+<text x="500" y="1602" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">All six increaseticks() exits funnel back to PIC_RunQueue(), whether or not anything changed.</text>
+<text x="500" y="1626" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">Only two of those six exits touch CPU_CycleMax: RETUNE and Emergency slowdown.</text>
+<text x="500" y="1646" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">The rest just re-measure, sleep, or reset bookkeeping for next time.</text>
+<text x="500" y="1674" text-anchor="middle" fill="var(--footer-subtext)" font-size="11" font-style="italic">Verified against joncampbell123/dosbox-x @ 192c1756 (dosbox.cpp:432-566, 566-716)</text>
+
+</svg>

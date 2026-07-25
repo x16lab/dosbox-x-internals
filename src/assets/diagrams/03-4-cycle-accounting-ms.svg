@@ -1,0 +1,197 @@
+<svg viewBox="0 0 900 860" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <style>
+            svg {
+            /* Global */
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            /* Indigo — latched / pending / default active state */
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            /* Neutral inset panel (register/memory visualizations) */
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-hl-bg: #dbeafe;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #374151;
+            --offset-label: #374151;
+            --segment-label: #1d4ed8;
+
+            /* Green — dispatched / in-service / success */
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            /* Orange — blocking / warning / caveat */
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            /* Structural / page furniture */
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            /* Gray — idle / neutral */
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-hl-bg: #1e3a5f;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #e5e7eb;
+            --offset-label: #e5e7eb;
+            --segment-label: #60a5fa;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Title / subtitle -->
+    <text x="450" y="40" text-anchor="middle" font-size="22" font-weight="700" fill="var(--fg-title)">CYCLE ACCOUNTING WITHIN A MILLISECOND</text>
+    <text x="450" y="64" text-anchor="middle" font-size="14" fill="var(--fg-subtitle)">PIC_TickIndex() — deriving guest &#8220;now&#8221; from three cycle counters</text>
+
+    <!-- Panel 1 label -->
+    <text x="450" y="94" text-anchor="middle" font-size="14" font-weight="700" fill="var(--inset-label)">ONE SIMULATED MILLISECOND — CPU_CycleMax = 3000 cycles</text>
+
+    <!-- Callout: Executed (green — derived, not stored) -->
+    <g text-anchor="middle">
+        <text x="216" y="122" font-size="13" font-weight="700" fill="var(--green-label)">Executed</text>
+        <text x="216" y="140" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--green-code)">1200 cycles</text>
+        <text x="216" y="156" font-size="11" fill="var(--green-note)">DERIVED, not stored</text>
+    </g>
+    <line x1="216" y1="164" x2="216" y2="210" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="3,3"/>
+
+    <!-- Callout: CPU_Cycles (indigo — tracked, batch remainder) -->
+    <g text-anchor="middle">
+        <text x="411" y="122" font-size="13" font-weight="700" fill="var(--indigo-label)">CPU_Cycles</text>
+        <text x="411" y="140" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--indigo-code)">300 cycles</text>
+        <text x="411" y="156" font-size="11" fill="var(--indigo-note)">TRACKED (batch remainder)</text>
+    </g>
+    <line x1="411" y1="164" x2="411" y2="210" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="3,3"/>
+
+    <!-- Callout: CPU_CycleLeft (gray — tracked, not yet handed out) -->
+    <g text-anchor="middle">
+        <text x="645" y="122" font-size="13" font-weight="700" fill="var(--box-text)">CPU_CycleLeft</text>
+        <text x="645" y="140" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--box-text)">1500 cycles</text>
+        <text x="645" y="156" font-size="11" fill="var(--box-text)">TRACKED (not yet handed out)</text>
+    </g>
+    <line x1="645" y1="164" x2="645" y2="210" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="3,3"/>
+
+    <!-- The bar: Executed | CPU_Cycles | CPU_CycleLeft, left-to-right = start-to-end -->
+    <rect x="60" y="210" width="312" height="60" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <rect x="372" y="210" width="78" height="60" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <rect x="450" y="210" width="390" height="60" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+
+    <text x="216" y="245" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--green-code)">1200</text>
+    <text x="411" y="245" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--indigo-code)">300</text>
+    <text x="645" y="245" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--box-text)">1500</text>
+
+    <!-- Timeline axis -->
+    <line x1="60" y1="290" x2="835" y2="290" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="60" y="308" font-size="12" fill="var(--fg-subtitle)">start of millisecond</text>
+    <text x="840" y="308" text-anchor="end" font-size="12" fill="var(--fg-subtitle)">end of millisecond</text>
+
+    <!-- Arrow to formula panel -->
+    <line x1="450" y1="320" x2="450" y2="352" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Formula panel -->
+    <rect x="100" y="364" width="700" height="124" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)"/>
+    <g font-family="Consolas, Menlo, monospace" font-size="14">
+        <text x="120" y="394" fill="var(--inset-label)" font-weight="700">Executed = CPU_CycleMax &#8722; CPU_CycleLeft &#8722; CPU_Cycles</text>
+        <text x="120" y="418" fill="var(--cell-text)">          =    3000      &#8722;     1500      &#8722;    300</text>
+        <text x="120" y="442" fill="var(--green-label)" font-weight="700">          =    1200</text>
+        <text x="120" y="472" fill="var(--segment-label)" font-weight="700">PIC_TickIndex() = Executed / CPU_CycleMax = 1200 / 3000 = 0.4</text>
+    </g>
+
+    <!-- Arrow to worked-examples panel -->
+    <line x1="450" y1="498" x2="450" y2="530" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Worked examples panel -->
+    <rect x="100" y="540" width="700" height="128" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)"/>
+    <text x="120" y="566" font-size="13" font-weight="700" fill="var(--inset-label)">PIC_TickIndex() across the millisecond</text>
+    <g font-family="Consolas, Menlo, monospace" font-size="13">
+        <text x="120" y="590" fill="var(--cell-text)">At start:            (3000 &#8722; 3000 &#8722;   0) / 3000 = 0.0</text>
+        <rect x="112" y="600" width="676" height="24" rx="4" fill="var(--cell-hl-bg)" stroke="var(--cell-hl-border)"/>
+        <text x="120" y="617" fill="var(--green-label)" font-weight="700">After 1200 cycles:   (3000 &#8722; 1500 &#8722; 300) / 3000 = 0.4   &#9664; shown above</text>
+        <text x="120" y="644" fill="var(--cell-text)">At end:              (3000 &#8722;    0 &#8722;   0) / 3000 = 1.0</text>
+    </g>
+
+    <!-- Footer -->
+    <line x1="100" y1="694" x2="800" y2="694" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="100" y="720" font-size="14" font-weight="700" fill="var(--footer-text)">Executed is derived, never stored &#8212; CPU_CycleMax &#8722; CPU_CycleLeft &#8722; CPU_Cycles</text>
+    <text x="100" y="740" font-size="12" fill="var(--footer-subtext)">Only CPU_CycleLeft and CPU_Cycles are real variables; the executed portion is recomputed on demand by PIC_TickIndex().</text>
+
+    <!-- Chip row -->
+    <g font-size="11" font-weight="700">
+        <rect x="100" y="758" width="14" height="14" rx="3" fill="var(--green-bg)" stroke="var(--green-border)"/>
+        <text x="120" y="769" fill="var(--green-label)">Executed (derived)</text>
+
+        <rect x="290" y="758" width="14" height="14" rx="3" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+        <text x="310" y="769" fill="var(--indigo-label)">CPU_Cycles (tracked)</text>
+
+        <rect x="490" y="758" width="14" height="14" rx="3" fill="var(--box-bg)" stroke="var(--box-border)"/>
+        <text x="510" y="769" fill="var(--box-text)">CPU_CycleLeft (tracked)</text>
+    </g>
+
+    <!-- Italic caveat footnote -->
+    <text x="100" y="798" font-size="12" font-style="italic" fill="var(--orange-footnote)">Valid only because CPU_CycleMax is a true constant within a millisecond &#8212;</text>
+    <text x="100" y="818" font-size="12" font-style="italic" fill="var(--orange-footnote)">revised solely by increaseticks() at the millisecond boundary (&#167;3.6).</text>
+</svg>

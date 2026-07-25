@@ -1,0 +1,347 @@
+---
+title: "The DOS Kernel"
+description: "How DOSBox-X's DOS_Drive abstraction turns an ordinary host directory into a legal 8.3 filesystem, how the MCB chain and PSP reproduce DOS's real in-memory bookkeeping structures byte-for-byte, and how INT 21h dispatch ties both to the calling convention every DOS program actually used — the single most useful chapter in this book for anyone doing DOS-era reverse engineering."
+order: 15
+chapterSlug: "the-dos-kernel"
+part: "software-layers"
+---
+
+# Chapter 15 — The DOS Kernel {#chapter-15-the-dos-kernel}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 15.1 A Kernel Made of Conventions, Not Silicon {#a-kernel-made-of-conventions-not-silicon}
+
+Every chapter before this one had a datasheet to be faithful to. VGA had register maps a real Trident or S3 chip actually implemented; the UART had a spec sheet DOSBox-X's own source comments cite by filename; the BIOS, @chapter(the-bios-layer) found, is mostly native code standing in for a ROM that in the common case was never loaded. This chapter is different again, and in a way that matters more than any of those: there is no MS-DOS chip. DOS was never hardware. It was a specification — a set of INT 21h service numbers, a fixed in-memory layout for the structures every program was expected to read and poke directly, and a body of accumulated real-world behavior that outgrew its own written specification within a few years of release. DOSBox-X's "kernel" is not an emulation of a physical thing at all; it's a from-scratch reimplementation of a software convention, held to a much harder standard than any chip in this book — not "does it answer the right registers," but "does a program built assuming MS-DOS's actual memory layout still find what it expects, in the same place, in the same format."
+
+That's also why this chapter matters more than its topic sentence suggests to anyone doing DOS-era reverse engineering specifically. A disassembler shows you instructions; it doesn't tell you what's sitting at `ES:[BX-2]` when a program dereferences its own Program Segment Prefix, or why a `FindFirst` call fills a Disk Transfer Area with a date field that looks like it was hand-packed into eleven bits. This chapter is the annotated map of exactly those structures — not DOSBox-X's private bookkeeping, but the real MS-DOS layout, since DOSBox-X only works at all by reproducing it exactly.
+
+### Source map for this chapter {#source-map-for-this-chapter}
+
+| Subsystem | DOSBox-X location |
+|---|---|
+| Drive abstraction / host-directory mounting | `include/dos_system.h` (`DOS_Drive`), `src/dos/drive_local.cpp` (`localDrive`) |
+| Directory cache / 8.3 name generation | `src/dos/drive_cache.cpp` |
+| Memory Control Block chain | `include/dos_mcb.h`, `src/dos/dos_memory.cpp` |
+| Program Segment Prefix | `src/dos/dos_classes.cpp` (`DOS_PSP`) |
+| Program loading (COM/EXE/EXEPACK) | `src/dos/dos_execute.cpp` |
+| INT 21h dispatch | `src/dos/dos.cpp` (`DOS_21Handler`), `src/dos/dos_files.cpp` |
+
+## 15.2 Host-Directory Mounting: One Interface, Many Backends {#host-directory-mounting-one-interface-many-backends}
+
+`MOUNT C: /home/user/dosgames` is most people's first encounter with DOSBox — and behind it sits exactly the pattern this book keeps finding at every layer: one abstract interface, several genuinely different implementations. `DOS_Drive` (`include/dos_system.h`) is a pure virtual base class —
+
+```cpp
+class DOS_Drive {
+public:
+    virtual bool FileOpen(DOS_File * * file,const char * name,uint32_t flags)=0;
+    virtual bool FileCreate(DOS_File * * file,const char * name,uint16_t attributes)=0;
+    virtual bool FindFirst(const char * _dir,DOS_DTA & dta,bool fcb_findfirst=false)=0;
+    virtual bool FindNext(DOS_DTA & dta)=0;
+    ...
+    virtual bool isRemote(void)=0;
+    virtual bool isRemovable(void)=0;
+```
+
+— and a DOS drive letter in DOSBox-X can mean any of several unrelated things behind that same interface: `localDrive`, an ordinary host directory; `isoDrive`, a mounted CD image; `fatDrive`, a raw FAT-formatted disk image read sector by sector; `overlayDrive`, a copy-on-write layer sitting on top of another drive so writes never touch the original files; `virtualDrive`, DOSBox-X's own internal Z: drive with no host backing at all. A DOS program calling `FindFirst` never knows or cares which of these actually answered; it's the same shape this book found in `MidiHandler` (@chapter(sound)) and the BIOS's per-interrupt tables (@chapter(the-bios-layer)) — the interface is the contract, and everything interesting happens in which implementation answers it.
+
+`localDrive::FileOpen()` (`src/dos/drive_local.cpp`) is the one that matters most for everyday use, because it's the one translating a DOS `OPEN` call into an actual host filesystem call:
+
+```cpp
+bool localDrive::FileOpen(DOS_File * * file,const char * name,uint32_t flags) {
+    ...
+    char newname[CROSS_LEN];
+    strcpy(newname,basedir);
+    strcat(newname,name);
+    CROSS_FILENAME(newname);
+    dirCache.ExpandName(newname);
+    ...
+    const host_cnv_char_t* host_name = CodePageGuestToHost(newname);
+    ...
+    hand=fopen(host_name,type);
+```
+
+Three translation steps happen before a single byte of host I/O occurs. `CROSS_FILENAME` rewrites DOS's backslash path separators into whatever the host platform actually uses (a no-op on Windows, a real substitution on Linux or macOS) — the same "guest convention, host reality" gap this book keeps finding, here at the level of a single character instead of a register. `dirCache.ExpandName()` turns whatever 8.3-mangled name the DOS program actually passed back into the real, full-length host filename it corresponds to — the reverse of @section(the-dos-kernel/the-directory-cache-manufacturing-8-3-names-on-the-fly)'s mangling, which is what makes it possible for a DOS program to open a file called `LONGFI~1.TXT` and have it resolve to `A Genuinely Long Filename.txt` sitting on the host disk. And `CodePageGuestToHost()` handles the fact that a DOS program's idea of character encoding (whatever code page it's running under, potentially Shift-JIS on a PC-98 configuration) and the host OS's filesystem encoding are not guaranteed to agree — if a filename genuinely can't be represented after that conversion, `FileOpen` reports `DOSERR_FILE_NOT_FOUND` rather than silently mangling bytes into something that merely looks plausible.
+
+Only after all three translations succeed does `fopen()` (or, on Windows with file-sharing enabled, `CreateFileW` through the Win32 API directly, to get real share-mode locking DOS software occasionally depended on) actually run — mapping DOS's `OPEN_READ`/`OPEN_WRITE`/`OPEN_READWRITE` flags onto the nearest equivalent `fopen()` mode string. A `localDrive` isn't simulating a filesystem; it's a fairly thin adapter sitting directly on top of the real one, which is exactly why "mount a directory" feels instant and free of any virtual-disk-image ceremony — there mostly isn't any.
+
+## 15.3 The Directory Cache: Manufacturing 8.3 Names On the Fly {#the-directory-cache-manufacturing-8-3-names-on-the-fly}
+
+A mounted host directory can contain filenames DOS never could: spaces, mixed case, names longer than eight characters plus a three-character extension, characters DOS's own filesystem forbids outright. `DOS_Drive_Cache` (`src/dos/drive_cache.cpp`) exists to paper over that gap in exactly the way real Windows 95's VFAT layer did for the same reason — by manufacturing a legal short name for every long one, on demand, and remembering the mapping.
+
+`CreateShortName()` walks a real filename through the same shape of transform Windows' own long-filename-to-8.3 algorithm used:
+
+```cpp
+strcpy(tmpName,info->orgname);
+upcase(tmpName);
+createShort = RemoveSpaces(tmpName);
+...
+if (strcmp(tmpName, ".") && strcmp(tmpName, "..") && filename_not_8x3(tmpName)) {
+    createShort = true;
+    ...
+    while (tmpName[i] != 0) {
+        if ((tmpName[i]&0xFF)<=32||tmpName[i]==127||tmpName[i]=='"'|| ... ||tmpName[i]=='?'||tmpName[i]=='*')
+            tmpName[i]='_';
+        ...
+    }
+}
+```
+
+Illegal characters become underscores, spaces are dropped, everything is upcased — and if the result still doesn't fit into eight characters plus an extension, or collides with another file that mangles to the same prefix, a numbered suffix gets appended:
+
+```cpp
+info->shortNr = CreateShortNameID(curDir,tmpName);
+sprintf(buffer, "%d", static_cast<unsigned int>(info->shortNr));
+safe_strncpy(info->shortname,tmpName,tocopy+1);
+strcat(info->shortname,"~");
+strcat(info->shortname,buffer);
+```
+
+`A Genuinely Long Filename.txt` becomes something like `AGENUI~1.TXT` — the exact tilde-numbering convention real Windows used, arrived at independently because it's solving the identical problem: make a unique, legal 8.3 name out of an arbitrary long one, deterministically, so the same long name always maps back to the same short one across a session. This isn't a cosmetic detail. It's the name that actually lands in a DOS program's Disk Transfer Area after `FindFirst`/`FindNext`, and it's the name a captured INT 21h trace from a real reverse-engineering session will show — which means understanding this algorithm is often the difference between "this program opened some file with a name I don't recognize" and correctly reconstructing which real host file it actually meant.
+
+## 15.4 Packed Time, Packed Date: A FAT Timestamp Hiding in a `stat` Struct {#packed-time-packed-date-a-fat-timestamp-hiding-in-a-stat-struct}
+
+Every `FindFirst` result, every file's last-modified stamp, has to cross another gap: the host filesystem hands back an ordinary Unix-style timestamp, and DOS's on-disk format — inherited directly by the DTA fields and by INT 21h's own Get/Set File Date and Time service — expects a packed 16-bit word in the same bit layout a real FAT directory entry used:
+
+```cpp
+static INLINE uint16_t DOS_PackTime(uint16_t hour,uint16_t min,uint16_t sec) {
+    return (hour&0x1f)<<11 | (min&0x3f) << 5 | ((sec/2)&0x1f);
+}
+static INLINE uint16_t DOS_PackDate(uint16_t year,uint16_t mon,uint16_t day) {
+    return ((year-1980)&0x7f)<<9 | (mon&0x3f) << 5 | (day&0x1f);
+}
+```
+
+Five bits for hours, six for minutes, five for seconds-divided-by-two — real FAT timestamps only ever had two-second resolution, which is why DOS software has never been able to tell 14:03:07 from 14:03:06 — and a seven-bit year field counted from 1980, which is the entire reason FAT-derived date arithmetic starts breaking in 2108 on hardware nobody will still be running DOS on. `localDrive::FileStat()` and its neighbors call `localtime()` on the host file's real modification time and feed the result straight through `DOS_PackTime`/`DOS_PackDate`, so a DOS program reading a file's timestamp through the DTA is reading a genuine FAT-format packed word, synthesized fresh from whatever the host filesystem actually reports — not a stored DOS-native value, since a mounted host directory never had one to begin with.
+
+## 15.5 The MCB Chain: DOS's Free List, Living in Guest Memory {#the-mcb-chain-dos-s-free-list-living-in-guest-memory}
+
+Real MS-DOS tracked conventional memory with a singly-linked list of Memory Control Blocks, each one a small header immediately preceding the memory it describes, chained forward by nothing more than "add my own size to my own address." `DOS_MCB` (`include/dos_mcb.h`) reproduces that layout field-for-field:
+
+```cpp
+struct sMCB {
+    uint8_t  type;          // 'M' = more blocks follow, 'Z' = last block in the chain
+    uint16_t psp_segment;   // owning PSP segment, or MCB_FREE (0x0000), or MCB_DOS (0x0008)
+    uint16_t size;          // size of the following block, in paragraphs
+    uint8_t  unused[3];
+    uint8_t  filename[8];   // name of the owning program, for memory-map utilities
+} GCC_ATTRIBUTE(packed);
+```
+
+and then does something none of this book's earlier structure-walking code has: it exposes that guest-memory-resident chain as an honest-to-C++ range you can iterate with a `for` loop —
+
+```cpp
+class Iterator {
+public:
+    Iterator& operator++() {
+        if (seg != 0) {
+            DOS_MCB cur(seg);
+            if (cur.isValid() && !cur.isLastMCB())
+                seg = cur.nextMCB().GetSeg();
+            else
+                seg = 0;
+        }
+        return *this;
+    }
+    DOS_MCB operator*() const { return DOS_MCB(seg); }
+    ...
+};
+Iterator begin() const { return Iterator(GetSeg()); }
+Iterator end()   const { return Iterator(0); }
+```
+
+so that `for (auto mcb : DOS_MCB(mcb_segment))` — used throughout `dos_memory.cpp` — walks the real chain the same way a `std::vector` iteration would, even though every element genuinely lives in the emulated machine's own conventional memory and nowhere else. There's no shadow structure on the host side recording what DOS's memory looks like; this iterator dereferences guest RAM on every step.
+
+`DOS_CompressMemory()` is where the chain earns its keep, merging adjacent free blocks back together whenever two neighboring MCBs both carry the `MCB_FREE` owner sentinel:
+
+```cpp
+if (mcb_segment >= first_segment && (mcb.GetPSPSeg()==MCB_FREE) && (mcb_next.GetPSPSeg()==MCB_FREE)) {
+    mcb.SetSize(mcb.GetSize()+mcb_next.GetSize()+1);
+    mcb.SetType(mcb_next.GetType());
+}
+```
+
+— ordinary free-list coalescing, the same idea behind any allocator. What's worth pausing on is the fallback path for when the chain *doesn't* validate cleanly, because it's a piece of deliberate, documented non-strictness rather than a bug:
+
+```cpp
+/* there are some programs that chain load other programs, but when they shrink their MCB down
+ * to their EXE resident size they put the stack or other data in the way of the next MCB free
+ * block header. Real MS-DOS appears in this case to just scan up to the last valid block and
+ * then right after it, write a new free MCB block there. */
+if (auto_repair_dos_psp_mcb_corruption && nseg >= healfrom && (nseg+1u) < CONV_MAX_SEG && !(machine==MCH_PCJR)) {
+    ...
+    mcb_next.SetSize(CONV_MAX_SEG - (nseg + 1u));
+    mcb_next.SetPSPSeg(MCB_FREE);
+    mcb_next.SetType(DOS_MCB::MCBType::LastBlock);
+}
+```
+
+This is this chapter's version of @chapter(the-bios-layer)'s Format Track stub — real code, doing something a strict reading of "the DOS memory model" wouldn't predict, because the *actual*, observed behavior of real MS-DOS in this exact situation is what DOSBox-X has to match, not the tidier behavior a specification alone would imply. A program that resizes its own memory block smaller and lets something else overwrite what used to be the next MCB's header shouldn't, by any formal model, still work — and yet real DOS tolerated it by rebuilding a plausible free block past the point of corruption rather than crashing, so that's what this code does too.
+
+`DOS_AllocateMemory()` is the allocator sitting on top of that chain, and it's worth knowing it isn't hardcoded to one strategy — `mem_strat`, a value real DOS also exposed and let TSRs and memory managers configure through INT 21h AH=0x58, selects first-fit, best-fit, or last-fit search behavior over the exact same MCB walk. And when it does split a free block to satisfy a request, the newly-allocated MCB doesn't just get resized — it gets the requesting program's own name copied into its `filename` field:
+
+```cpp
+mcb.SetPSPSeg(dos.psp());
+mcb.SetFileName(psp_name);
+```
+
+which is not cosmetic: that's the same field a real MS-DOS memory-map utility like `MEM /C` read to label which program owned which block, and DOSBox-X keeps it populated for the same reason real DOS did — so that inspecting the chain, whether from DOS-side tooling or a debugger attached to DOSBox-X itself, tells you something a bare address range never could.
+
+## 15.6 The PSP: A CP/M Fossil at Every Program's Base {#the-psp-a-cp-m-fossil-at-every-program-s-base}
+
+Every running DOS program owns a Program Segment Prefix, a 256-byte block immediately preceding its own code, and `DOS_PSP::MakeNew()` (`src/dos/dos_classes.cpp`) builds one with a level of historical fidelity that goes well past "reserve 256 bytes." Two fields in particular are worth reading closely, because they're not DOS inventions at all — they're artifacts of DOS's own ancestry.
+
+Offset 0x00 holds a genuine `INT 20h` instruction — DOS's original, simplest process-termination call, preserved so that a program can terminate just by executing a far call to offset 0 of its own PSP, a convention that predates `INT 21h AH=0x4C` entirely:
+
+```cpp
+sSave(sPSP,exit[0],0xcd);
+sSave(sPSP,exit[1],0x20);
+```
+
+Offset 0x05, though, is the more interesting fossil: the CP/M "CALL 5" entry point, kept around purely for backward compatibility with CP/M-derived software that expected to reach the operating system that way, and DOSBox-X reproduces not one fixed behavior here but several, selected by a `cpm_compat_mode` setting that names which specific real DOS version's actual quirk it's reproducing:
+
+```cpp
+if (cpm_compat_mode == CPM_COMPAT_MSDOS2) { /* MS-DOS 2.x behavior, where offset is the memory size (for some reason) */
+    sSave(sPSP,far_call,0x9a);
+    if (mem_size>CPM_MAX_SEG_SIZE) mem_size=CPM_MAX_SEG_SIZE;
+    mem_size-=0x10;
+    sSave(sPSP,cpm_entry,RealMake(0xc-mem_size,mem_size<<4));
+}
+else if (cpm_compat_mode == CPM_COMPAT_MSDOS5) { /* MS-DOS 5.x behavior, for whatever reason */
+    sSave(sPSP,far_call,0x9a);
+    /* if 64KB or more, call far to F01D:FEF0.
+     * else, call far to 0000:00C0.
+     * don't ask me why MS-DOS 5.0 does this, ask Microsoft. */
+    if (mem_size >= CPM_MAX_SEG_SIZE)
+        sSave(sPSP,cpm_entry,RealMake(0xF01D,0xFEF0));
+    else
+        sSave(sPSP,cpm_entry,RealMake(0x0000,0x00C0));
+}
+```
+
+Neither branch's behavior is arbitrary, and neither is obvious from first principles — they're each precisely what a specific real DOS version's own kernel did at this exact offset, quirks and all, preserved by DOSBox-X because *some* real program, somewhere, depended on the specific one its target DOS version implemented.
+
+The rest of `MakeNew()` sets up the machinery this chapter has already been assuming: `psp_parent` records the PSP segment of whatever process launched this one, forming DOS's process ancestry chain the same way a Unix parent PID does; and a twenty-entry file handle table gets initialized to all-`0xFF` (no handle):
+
+```cpp
+sSave(sPSP,file_table,RealMake(seg,offsetof(sPSP,files)));
+sSave(sPSP,max_files,20);
+for (uint16_t ct=0;ct<20;ct++) SetFileHandle(ct,0xff);
+```
+
+This table is the other half of a two-tier design @section(the-dos-kernel/host-directory-mounting-one-interface-many-backends)'s file-opening path only partly showed: DOSBox-X keeps one global table of up to `DOS_FILES` real open-file objects, and every process's PSP holds its *own* small table of indices into that global one — meaning the handle number `3` a running program sees in `AX` after an `OPEN` call is a per-process, PSP-local number, not a raw index into DOSBox-X's actual file table, exactly mirroring the real DOS system-file-table-versus-per-process-Job-File-Table split. It's what makes handle inheritance across `EXEC` (@section(the-dos-kernel/dos-execute-from-an-mz-signature-to-a-running-cs-ip)'s `DOS_ChildPSP`/`CopyFileTable` machinery, not quoted here) and per-process handle redirection possible at all: two programs can each believe they own "handle 1," pointing at completely different underlying files, because the number in `AX` was never anything but an index into a table private to that one PSP.
+
+## 15.7 DOS_Execute: From an MZ Signature to a Running CS:IP {#dos-execute-from-an-mz-signature-to-a-running-cs-ip}
+
+`DOS_Execute()` (`src/dos/dos_execute.cpp`) is where a file on a mounted drive becomes a running program, and its very first real decision is the one every DOS disassembler and loader still makes: read the first two bytes and check for the `MZ` signature.
+
+```cpp
+if (len<sizeof(EXE_Header)) {
+    if (len==0) { DOS_SetError(DOSERR_ACCESS_DENIED); ...; return false; }
+    iscom=true;    // Otherwise must be a .com file
+} else {
+    ...
+    if ((head.signature!=MAGIC1) && (head.signature!=MAGIC2)) iscom=true;
+```
+
+No signature (or a file too short to hold a header at all) means COM: load it as a flat binary at offset `0x100` in a fresh segment, no relocation, no header to parse. A valid `MZ`/`ZM` signature means EXE: parse the real relocation table, patch every entry the header lists, and place the program according to whatever load segment DOSBox-X chose for it — the header-driven path this book's earlier chapters have occasionally referenced without tracing in full.
+
+Buried inside that EXE path, guarded by a check for `EXEPACK`'s own signature strings, sits something genuinely unexpected in an emulator: a working in-place decompressor for `EXEPACK`-compressed executables, walking the packed image backward and re-expanding it byte by byte according to the format's own two-command language:
+
+```cpp
+switch (commandByte & ~1u) {
+    case 0xB0: { /* (reading backwards) BYTE:value WORD:length */
+        const uint16_t l = mem_readw(--srcPos); srcPos--;
+        const uint8_t v = mem_readb(srcPos--);
+        for (unsigned int c=0;c < l;c++)
+            mem_writeb(dstPos--,v);
+        break;
+    }
+    case 0xB2: { /* (reading backwards) WORD:length */
+        const uint16_t l = mem_readw(--srcPos); srcPos--;
+        for (unsigned int c=0;c < l;c++)
+            mem_writeb(dstPos--,mem_readb(srcPos--));
+        break;
+    }
+```
+
+`0xB0` is a run-length command (repeat one byte `l` times), `0xB2` is a literal copy — the entire compression scheme EXEPACK ever used, decoded backward because the compressed image was itself built to decompress in place, growing from a small footprint at the end of the load segment back out to its full uncompressed size, exactly the trick real `EXEPACK.EXE`-compressed programs relied on to shrink themselves. This matters directly for reverse-engineering work: an EXEPACK-compressed DOS binary handed to a disassembler cold is largely opaque until it's unpacked, and DOSBox-X's own unpacker here — real code doing the real algorithm, not a stub — is a legitimate reference implementation for anyone needing to reproduce that step outside the emulator.
+
+Once decompression (if any) and relocation are done, entry state is set with the same COM/EXE split as loading itself:
+
+```cpp
+if (iscom) {
+    unsigned int stack_sp = 0xfffe;
+    if (stack_sp > ((memsize*0x10UL)-2))
+        stack_sp = (memsize*0x10UL)-2;
+    csip=RealMake(pspseg,0x100);
+    sssp=RealMake(pspseg,stack_sp);
+} else {
+    csip=RealMake(loadseg+head.initCS,head.initIP);
+    sssp=RealMake(loadseg+head.initSS,head.initSP);
+}
+```
+
+A COM program always starts execution at offset `0x100` of its own PSP-adjacent segment, with `SP` at `0xFFFE` clipped down if the allocated block is smaller than that would allow — a comment nearby, signed with the maintainer's own initials, notes this clipping exists specifically so COM programs "run correctly in less than 72KB of RAM," the kind of small defensive fix this book's chapters keep finding attributed to one specific observed failure rather than derived from the specification in the abstract. An EXE program's entry point instead comes straight from the header's own `initCS`/`initIP`/`initSS`/`initSP` fields, relocated against whatever segment the loader actually placed the image at — which is precisely the four values a reverse engineer reading a raw MZ header by hand needs to compute the same starting state DOSBox-X (and real DOS) would.
+
+## 15.8 INT 21h Dispatch: The Single Switch Statement Underneath All of DOS {#int-21h-dispatch-the-single-switch-statement-underneath-all-of-dos}
+
+Everything in this chapter converges on one function: `DOS_21Handler()` (`src/dos/dos.cpp`), the native routine wired to the `INT 21h` vector through the same callback-trap mechanism @chapter(the-bios-layer) traced for the BIOS interrupts, dispatching on `AH` across a switch statement that, by the time this commit was cut, runs to several thousand lines.
+
+Its prologue does real work before the dispatch even begins. If DOS itself is loaded into the High Memory Area (a real, common `DOS=HIGH` configuration), the handler has to enable the A20 gate first, or a DOS kernel routine executing above the 1MB line would wrap around and corrupt itself:
+
+```cpp
+/* Real MS-DOS behavior:
+ *   If HIMEM.SYS is loaded and CONFIG.SYS says DOS=HIGH, DOS will load itself into the HMA area.
+ *   To prevent crashes, the INT 21h handler down below will enable the A20 gate before executing
+ *   the DOS kernel. */
+if (DOS_IS_IN_HMA()) {
+    ...
+    XMS_DOS_LocalA20EnableIfNotEnabled();
+}
+```
+
+Then, for most functions, it saves the caller's registers onto the stack and records that location in the current PSP —
+
+```cpp
+if (((reg_ah != 0x50) && (reg_ah != 0x51) && (reg_ah != 0x62) && (reg_ah != 0x64)) && (reg_ah<0x6c)) {
+    DOS_PSP psp(dos.psp());
+    psp.SetStack(RealMake(SegValue(ss),reg_sp-18));
+    real_writew(SegValue(ss), reg_sp - 18, reg_ax);
+    ...
+```
+
+— the exact `SetStack()` call @section(the-dos-kernel/the-psp-a-cp-m-fossil-at-every-program-s-base)'s PSP layout already introduced, here shown at the moment it's actually used: recording where a program's registers live on its own stack at the instant it entered the kernel, which is what lets a later `EXEC` call (or a critical-error handler, or a TSR chaining into this same interrupt) find and restore them correctly. And before dispatch, most functions are checked against a pending Ctrl+Break — except functions `AH=0x06`/`0x07` (raw character I/O), deliberately excluded, with a comment naming the exact PC-98 text editor that broke when this was checked unconditionally:
+
+```cpp
+if (reg_ah == 0x06 || reg_ah == 0x07) {
+    /* does not check CTRL+BREAK. ... This fixes PC-98 text editor
+     * VZ.EXE which will leave it's INT 6h handler in memory if interrupted this way */
+}
+```
+
+The dispatch itself is the plainest possible shape — `switch (reg_ah)`, one case per DOS function number — and its individual cases are where this chapter's earlier sections stop being separate topics and start being one continuous call chain. `case 0x3d`, Open Existing File, resolves the drive letter from the passed filename and calls straight into @section(the-dos-kernel/host-directory-mounting-one-interface-many-backends)'s abstraction:
+
+```cpp
+exists=Drives[drive]->FileOpen(&Files[handle],fullname,flags) || Drives[drive]->FileOpen(&Files[handle],upcase(fullname),flags);
+if (exists) Files[handle]->SetDrive(drive);
+```
+
+— a virtual call through `DOS_Drive`, landing in `localDrive::FileOpen`, landing in `fopen()`, three sections of this chapter collapsing into two lines. `case 0x00`, Terminate Program, carries this book's now-familiar shape of a real, named compatibility fix: a specific 1995 demoscene production that deliberately underflows its own stack pointer on exit, which real MS-DOS tolerates and DOSBox-X therefore has to as well:
+
+```cpp
+/* HACK for demoscene prod parties/1995/wired95/surprisecode/w95spcod.zip/WINNERS/SURP-KLF
+ *
+ * This demo starts off by popping 3 words off the stack ... Since SP starts out at 0xFFFE,
+ * that means SP wraps around to start popping values out of the PSP segment.
+ * Real MS-DOS will also start the demo with SP at 0xFFFE.
+ */
+```
+
+And `case 0x4b`, EXEC, is @section(the-dos-kernel/dos-execute-from-an-mz-signature-to-a-running-cs-ip) wearing a DOS function number — the code path this whole chapter has been building toward, where a filename in `DS:DX` becomes a call into `DOS_Execute()`, becomes an MZ-signature check, becomes (if EXEPACK applies) a real decompression pass, becomes a fully-initialized PSP with its file-handle table copied from the parent, becomes a jump to a freshly-computed `CS:IP`.
+
+## 15.9 What Carries Forward {#what-carries-forward}
+
+None of this chapter had a chip behind it, and that turns out to be the entire point. A UART chapter earns trust by matching a datasheet; this chapter earns it by matching *behavior* — the exact bit layout of a packed FAT timestamp, the exact tilde-numbering scheme a mangled long filename gets, the exact offset a CP/M program expected to `CALL 5` into, the exact stack pointer value one demoscene production from 1995 assumed it could safely underflow. Every one of those is a convention, not a physical constraint, and conventions are unforgiving in a way silicon rarely is: get a register's bit layout slightly wrong and a program might tolerate it; get the PSP's file-handle table one byte off, or the MCB chain's owner-field semantics wrong, and every single DOS program this emulator ever runs depends on the mistake never happening.
+
+That's this chapter's real value for reverse-engineering work specifically. Disassembling a DOS-era binary means constantly asking "what does the operating system look like from here" — what's at this PSP offset, what will this INT 21h call actually do, what will this MCB chain look like after this allocation — and every answer in this chapter is not DOSBox-X's private convention but real MS-DOS's, reimplemented closely enough that DOSBox-X's own C++ source is, in a very real sense, one of the more readable specifications of the DOS kernel's actual on-disk and in-memory behavior left in wide circulation.

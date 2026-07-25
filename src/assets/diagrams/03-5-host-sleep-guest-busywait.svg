@@ -1,0 +1,175 @@
+<svg viewBox="0 0 1000 760" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+<defs>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --inset-bg: #f9fafb;
+    --inset-border: #9ca3af;
+    --inset-label: #374151;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+
+    --box-bg: #f3f4f6;
+    --box-border: #9ca3af;
+    --box-text: #374151;
+
+    --dashed-line: #6b7280;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --inset-bg: #1f2937;
+    --inset-border: #94a3b8;
+    --inset-label: #e5e7eb;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-bg: #3a2413;
+    --orange-border: #fb923c;
+    --orange-label: #fdba74;
+    --orange-code: #fed7aa;
+    --orange-footnote: #fdba74;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+
+    --box-bg: #1f2937;
+    --box-border: #94a3b8;
+    --box-text: #e5e7eb;
+
+    --dashed-line: #94a3b8;
+}
+
+.label { font-weight: 700; font-size: 15px; }
+.code  { font-family: Consolas, Menlo, monospace; font-size: 12px; }
+.note  { font-size: 11px; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+</defs>
+
+<!-- Title -->
+<text x="500" y="30" text-anchor="middle" fill="var(--fg-title)" font-size="22" font-weight="700">Host Sleep vs. Guest Busy-Wait</text>
+<text x="500" y="52" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13" font-family="Consolas, Menlo, monospace">increaseticks() — src/dosbox.cpp:566</text>
+
+<!-- Legend -->
+<g class="note">
+  <rect x="330" y="66" width="14" height="14" fill="var(--green-bg)" stroke="var(--green-border)"/>
+  <text x="350" y="77" fill="var(--footer-text)">CPU decoder executes (host actually working)</text>
+
+  <rect x="700" y="66" width="14" height="14" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+  <text x="720" y="77" fill="var(--footer-text)">SDL_Delay() — host sleeps, OS reschedules</text>
+</g>
+
+<!-- Guest busy-wait code box -->
+<rect x="60" y="104" width="260" height="112" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+<g class="code" fill="var(--box-text)">
+  <text x="76" y="124">wait_retrace:</text>
+  <text x="76" y="141">    mov dx, 3DAh</text>
+  <text x="76" y="158">    in  al, dx</text>
+  <text x="76" y="175">    test al, 08h</text>
+  <text x="76" y="192">    jz  wait_retrace</text>
+</g>
+<text x="190" y="234" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">no HLT, no yield — spins the guest CPU forever, from its own point of view</text>
+
+<!-- Guest perception track -->
+<text x="700" y="268" text-anchor="middle" class="label" fill="var(--green-label)">GUEST PERCEPTION</text>
+<rect x="60" y="280" width="880" height="56" rx="8" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<text x="500" y="313" text-anchor="middle" class="code" fill="var(--green-code)">100% busy — continuous execution, no visible pause</text>
+
+<!-- Guide lines down to host track -->
+<g stroke="var(--dashed-line)" stroke-width="1" stroke-dasharray="3,3">
+  <line x1="60" y1="336" x2="60" y2="386"/>
+  <line x1="280" y1="336" x2="280" y2="386"/>
+  <line x1="500" y1="336" x2="500" y2="386"/>
+  <line x1="720" y1="336" x2="720" y2="386"/>
+  <line x1="940" y1="336" x2="940" y2="386"/>
+</g>
+
+<!-- Host reality track -->
+<text x="700" y="378" text-anchor="middle" class="label" fill="var(--orange-label)">HOST REALITY (wall-clock)</text>
+
+<!-- unit 1: normal burst + sleep -->
+<rect x="60"  y="390" width="20"  height="52" fill="var(--green-bg)"  stroke="var(--green-border)"/>
+<rect x="80"  y="390" width="196" height="52" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+
+<!-- unit 2: normal burst + sleep -->
+<rect x="280" y="390" width="20"  height="52" fill="var(--green-bg)"  stroke="var(--green-border)"/>
+<rect x="300" y="390" width="196" height="52" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+
+<!-- unit 3: catch-up, no sleep -->
+<rect x="500" y="390" width="216" height="52" fill="var(--green-bg)" stroke="var(--orange-border)" stroke-width="2" stroke-dasharray="6,3"/>
+
+<!-- unit 4: normal burst + sleep -->
+<rect x="720" y="390" width="20"  height="52" fill="var(--green-bg)"  stroke="var(--green-border)"/>
+<rect x="740" y="390" width="196" height="52" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+
+<!-- Annotations -->
+<path d="M70,442 L70,458" fill="none" stroke="var(--dashed-line)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="70" y="472" text-anchor="middle" class="note" fill="var(--green-note)">(*cpudecoder)() runs the poll</text>
+<text x="70" y="486" text-anchor="middle" class="note" fill="var(--green-note)" font-style="italic">— sub-millisecond, host barely notices</text>
+
+<path d="M150,442 L150,458" fill="none" stroke="var(--dashed-line)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="150" y="472" text-anchor="middle" class="note" fill="var(--orange-footnote)">wrap_delay(1) → SDL_Delay(1)</text>
+<text x="150" y="486" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">thread handed back to the OS scheduler</text>
+
+<path d="M608,442 L608,458" fill="none" stroke="var(--dashed-line)" stroke-width="1" stroke-dasharray="3,3"/>
+<text x="608" y="472" text-anchor="middle" class="note" fill="var(--orange-label)" font-weight="700">ticksNew &gt; ticksLast</text>
+<text x="608" y="486" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">host already advanced — skip the sleep this cycle</text>
+
+<!-- increaseticks() citation box -->
+<rect x="150" y="510" width="700" height="112" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)"/>
+<text x="500" y="532" text-anchor="middle" class="label" fill="var(--inset-label)" font-size="14">increaseticks() — src/dosbox.cpp:566</text>
+<g class="code" fill="var(--inset-label)">
+  <text x="170" y="552">uint32_t ticksNew = GetTicks();</text>
+  <text x="170" y="568">if (ticksNew &lt;= ticksLast) {   // no new host time has elapsed  — line 582</text>
+  <text x="170" y="584">    if (!CPU_CycleAutoAdjust || CPU_SkipCycleAutoAdjust || sleep1count &lt; 3)</text>
+  <text x="170" y="600">        wrap_delay(1);          // #define wrap_delay(a) SDL_Delay(a)  — line 428</text>
+</g>
+<text x="500" y="616" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">else: randomized {2,2,3,2,2,4,2} sleep pattern avoids resonance with 1ms-granularity host schedulers — lines 593–596</text>
+
+<!-- Footer -->
+<line x1="70" y1="640" x2="930" y2="640" stroke="var(--footer-line)"/>
+<text x="500" y="664" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">Guest and host disagree about what just happened: the guest never stops spinning; the host mostly sleeps.</text>
+<text x="500" y="684" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">Each host-reality unit is one call into Normal_Loop()'s host-bound branch — a bounded cycle batch, then a real OS-level sleep, not a spin.</text>
+<text x="500" y="706" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">Codebase-verified: src/dosbox.cpp:566 increaseticks(), :428 wrap_delay macro, :582–586 sleep guard, :593–596 jitter-avoidance pattern (dosbox-x @ 192c1756).</text>
+
+</svg>

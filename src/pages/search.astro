@@ -1,0 +1,43 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/url';
+import { SITE } from '../consts';
+
+const bundlePath = withBase('/pagefind/');
+---
+
+<BaseLayout title="Search" description={`Search the book — ${SITE.title}.`}>
+  <section class="page-head section">
+    <p class="eyebrow">Search</p>
+    <h1>Search the book.</h1>
+    <p class="lead">
+      Full-text search across all chapters — indexed at build time by Pagefind.
+    </p>
+  </section>
+
+  <section class="section search-section" aria-label="Site search">
+    <link rel="stylesheet" href={`${bundlePath}pagefind-ui.css`} />
+    <div id="search">
+      <p class="search-fallback">
+        The search index is generated at build time. Run <code>npm run build</code> and
+        preview the site to try it — it is not available on the dev server.
+      </p>
+    </div>
+    <script is:inline define:vars={{ bundlePath }}>
+      const script = document.createElement('script');
+      script.src = `${bundlePath}pagefind-ui.js`;
+      script.onload = () => {
+        document.querySelector('#search .search-fallback')?.remove();
+        new PagefindUI({
+          element: '#search',
+          bundlePath,
+          baseUrl: '/dosbox-x-internals/',
+          showImages: false,
+          showSubResults: true,
+          autofocus: true,
+        });
+      };
+      document.head.append(script);
+    </script>
+  </section>
+</BaseLayout>

@@ -1,0 +1,65 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { SITE } from '../consts';
+---
+
+<BaseLayout title={`Privacy Policy — ${SITE.title}`} description="Privacy policy and cookie notice for Inside DOSBox-X.">
+  <style>
+    .privacy-content a {
+      background-image: none;
+      text-decoration: underline;
+      text-underline-offset: 0.2em;
+      text-decoration-thickness: 1px;
+      text-decoration-color: var(--color-accent);
+    }
+    .privacy-content a:hover {
+      background-size: 0;
+      color: var(--color-accent);
+    }
+  </style>
+  <section class="page-head section">
+    <p class="eyebrow">Privacy</p>
+    <h1>Privacy Policy</h1>
+  </section>
+
+  <section class="section privacy-content" style="max-width: 65ch;">
+    <h2>Information We Collect</h2>
+    <p>This site uses <strong>Google Analytics</strong>, a web analytics service provided by Google LLC (&quot;Google&quot;). Google Analytics uses cookies and similar technologies to collect anonymous usage data about how visitors interact with the site. This includes:</p>
+    <ul>
+      <li>Pages visited and time spent on each page</li>
+      <li>Referring website or search terms</li>
+      <li>Browser type, device type, and operating system</li>
+      <li>Approximate geographic location (country/city level only)</li>
+    </ul>
+    <p>This information is <strong>aggregated and anonymized</strong>. It cannot be used to personally identify you.</p>
+
+    <h2>Cookies</h2>
+    <p>A cookie is a small text file stored on your device by your web browser. This site uses the following cookies:</p>
+    <ul>
+      <li><strong>_ga</strong> / <strong>_ga_&lt;container-id&gt;</strong> &mdash; Google Analytics cookies used to distinguish unique users and throttle request rates. Expire after 2 years.</li>
+      <li><strong>cookie-consent</strong> &mdash; Stores your cookie preference (accepted or declined) so the banner does not reappear on subsequent visits. No expiration.</li>
+      <li><strong>theme</strong> &mdash; Stores your light/dark colour theme preference. No expiration.</li>
+    </ul>
+
+    <h2>How We Use the Data</h2>
+    <p>Google Analytics data is used solely to understand which content is most useful to readers, identify broken links or performance issues, and guide future writing priorities. We do not:</p>
+    <ul>
+      <li>Share personal data with third parties</li>
+      <li>Use advertising or tracking cookies beyond analytics</li>
+      <li>Cross-reference analytics data with any other data source</li>
+    </ul>
+
+    <h2>Your Choices</h2>
+    <p>When you first visit the site, a consent banner asks you to Accept or Decline analytics cookies. You may change your choice at any time by clearing your browser's cookies for this site.</p>
+    <p>You can also opt out of Google Analytics entirely by installing the <a href="https://tools.google.com/dlpage/gaoptout" rel="noopener noreferrer" target="_blank">Google Analytics Opt-Out Browser Add-On</a>.</p>
+
+    <h2>Data Retention</h2>
+    <p>Google Analytics data is retained for 14 months. Individual-level data older than this is automatically deleted by Google.</p>
+
+    <h2>Third-Party Services</h2>
+    <p>This site is hosted on <strong>GitHub Pages</strong>. GitHub's privacy policy is available at <a href="https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement" rel="noopener noreferrer" target="_blank">docs.github.com</a>. Google's privacy policy is available at <a href="https://policies.google.com/privacy" rel="noopener noreferrer" target="_blank">policies.google.com/privacy</a>.</p>
+
+    <h2>Changes to This Policy</h2>
+    <p>Any updates to this privacy policy will be reflected here. The policy was last updated on 28 July 2026.</p>
+  </section>
+</BaseLayout>

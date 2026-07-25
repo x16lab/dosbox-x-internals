@@ -1,0 +1,217 @@
+<svg viewBox="0 0 840 960" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-hl-bg: #dbeafe;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #374151;
+            --offset-label: #374151;
+            --segment-label: #1d4ed8;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --blue-bg: #eff6ff;
+            --blue-border: #3b82f6;
+            --blue-label: #1d4ed8;
+            --blue-code: #1e3a8a;
+            --blue-note: #4b5563;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-hl-bg: #1e3a5f;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #e5e7eb;
+            --offset-label: #e5e7eb;
+            --segment-label: #60a5fa;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --blue-bg: #1e2a4a;
+            --blue-border: #60a5fa;
+            --blue-label: #93c5fd;
+            --blue-code: #dbeafe;
+            --blue-note: #9ca3af;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+
+    <!-- Title -->
+    <text x="420" y="34" text-anchor="middle" font-size="19" font-weight="700" fill="var(--fg-title)">Real-mode IVT lookup — inside CPU_Interrupt()</text>
+    <text x="420" y="54" text-anchor="middle" font-size="12.5" fill="var(--fg-subtitle)">the real-mode branch that runs for every hardware IRQ, software INT, and CPU exception</text>
+
+    <!-- Step 1 -->
+    <rect x="40" y="76" width="500" height="104" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="60" y="100" font-size="12" font-weight="700" fill="var(--indigo-label)">STEP 1 — find the vector's table entry</text>
+    <text x="60" y="126" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--indigo-code)">base  = cpu.idt.GetBase();</text>
+    <text x="60" y="146" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--indigo-code)">entry = base + (num &lt;&lt; 2);</text>
+    <text x="60" y="168" font-size="11.5" fill="var(--indigo-note)">4 bytes per vector · in plain real mode, base is 0x00000</text>
+
+    <!-- IVT memory inset -->
+    <rect x="565" y="76" width="235" height="104" rx="10" fill="var(--inset-bg)" stroke="var(--inset-border)" stroke-width="1.25"/>
+    <text x="583" y="98" font-size="11" font-weight="700" fill="var(--inset-label)">IVT ENTRY (4 bytes)</text>
+    <g font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--cell-text)">
+        <rect x="583" y="106" width="52" height="26" fill="var(--cell-bg)" stroke="var(--cell-border)"/>
+        <rect x="635" y="106" width="52" height="26" fill="var(--cell-bg)" stroke="var(--cell-border)"/>
+        <rect x="687" y="106" width="52" height="26" fill="var(--cell-hl-bg)" stroke="var(--cell-hl-border)"/>
+        <rect x="739" y="106" width="52" height="26" fill="var(--cell-hl-bg)" stroke="var(--cell-hl-border)"/>
+        <text x="609" y="123" text-anchor="middle" font-size="9.5">entry</text>
+        <text x="661" y="123" text-anchor="middle" font-size="9.5">+1</text>
+        <text x="713" y="123" text-anchor="middle" font-size="9.5">+2</text>
+        <text x="765" y="123" text-anchor="middle" font-size="9.5">+3</text>
+    </g>
+    <text x="583" y="148" font-size="10.5" fill="var(--offset-label)">offset word (bytes 0–1)</text>
+    <text x="583" y="164" font-size="10.5" fill="var(--segment-label)">segment word (bytes 2–3)</text>
+
+    <line x1="420" y1="180" x2="420" y2="252" stroke="var(--arrow)" stroke-width="1.5"/>
+
+    <!-- Step 2 container -->
+    <rect x="30" y="206" width="780" height="220" rx="12" fill="none" stroke="var(--blue-border)" stroke-width="1.5"/>
+    <text x="50" y="230" font-size="12" font-weight="700" fill="var(--blue-label)">STEP 2 — two ordinary guest memory reads</text>
+
+    <rect x="40" y="274" width="360" height="118" rx="10" fill="var(--blue-bg)" stroke="var(--blue-border)" stroke-width="1.5"/>
+    <text x="60" y="298" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--blue-code)">reg_eip =</text>
+    <text x="60" y="318" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--blue-code)">  mem_readw(base+(num&lt;&lt;2));</text>
+    <text x="60" y="344" font-size="11.5" fill="var(--blue-note)">reads the offset word</text>
+    <text x="60" y="362" font-size="11.5" fill="var(--blue-note)">— same TLB / PageHandler path</text>
+    <text x="60" y="378" font-size="11.5" fill="var(--blue-note)">as any other guest memory access (Ch.4)</text>
+
+    <rect x="440" y="274" width="360" height="118" rx="10" fill="var(--blue-bg)" stroke="var(--blue-border)" stroke-width="1.5"/>
+    <text x="460" y="298" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--blue-code)">Segs.val[cs] =</text>
+    <text x="460" y="318" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--blue-code)">  mem_readw(base+(num&lt;&lt;2)+2);</text>
+    <text x="460" y="344" font-size="11.5" fill="var(--blue-note)">reads the segment word</text>
+    <text x="460" y="362" font-size="11.5" fill="var(--blue-note)">two bytes further into</text>
+    <text x="460" y="378" font-size="11.5" fill="var(--blue-note)">the same 4-byte entry</text>
+
+    <!-- Fan-out: trunk splits the single incoming line into both inner boxes -->
+    <line x1="220" y1="252" x2="620" y2="252" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="220" y1="252" x2="220" y2="274" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="620" y1="252" x2="620" y2="274" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Connector out: both inner boxes converge into a single line down to Step 3 -->
+    <line x1="220" y1="392" x2="220" y2="412" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="620" y1="392" x2="620" y2="412" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="220" y1="412" x2="620" y2="412" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="420" y1="412" x2="420" y2="444" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Step 3 -->
+    <rect x="40" y="444" width="760" height="100" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="60" y="468" font-size="12" font-weight="700" fill="var(--green-label)">STEP 3 — segment load: identical arithmetic to any real-mode far jump (§4.3)</text>
+    <text x="60" y="494" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--green-code)">Segs.phys[cs] = Segs.val[cs] &lt;&lt; 4u;</text>
+    <text x="60" y="518" font-size="11.5" fill="var(--green-note)">turns the 16-bit segment value the IVT stored into the linear (physical) address the CS register actually points at</text>
+    <text x="60" y="534" font-size="11.5" fill="var(--green-note)">— this is a segment load, not a page-table walk; there is no protection check to perform in real mode</text>
+
+    <line x1="420" y1="544" x2="420" y2="576" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Step 4 -->
+    <rect x="40" y="582" width="760" height="140" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="60" y="606" font-size="12" font-weight="700" fill="var(--orange-label)">STEP 4 — control transfers, further hardware IRQs are blocked</text>
+    <text x="60" y="632" font-family="Consolas, Menlo, monospace" font-size="13.5" fill="var(--orange-code)">SETFLAGBIT(IF, false);   SETFLAGBIT(TF, false);</text>
+    <text x="60" y="654" font-size="11.5" fill="var(--orange-code)">execution now resumes at Segs.phys[cs] + reg_eip — the handler the guest's own IVT named</text>
+    <text x="60" y="676" font-size="11.5" fill="var(--orange-code)">clearing IF here is what makes a handler that runs too long risk losing events from</text>
+    <text x="60" y="694" font-size="11.5" fill="var(--orange-code)">devices that can't wait — nothing re-enables interrupts until the handler itself does (§7.3)</text>
+    <text x="60" y="712" font-size="10.5" fill="var(--orange-footnote)">(flags, CS, and the return IP were already pushed to the stack before this point — omitted above for focus)</text>
+
+    <!-- Example call sites -->
+    <rect x="40" y="784" width="179" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="129.5" y="812" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--box-text)">CPU_HW_Interrupt()</text>
+
+    <rect x="233" y="784" width="179" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="322.5" y="812" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--box-text)">CPU_SW_Interrupt()</text>
+
+    <rect x="426" y="784" width="179" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="515.5" y="802" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10.5" fill="var(--box-text)">CPU_SW_Interrupt_</text>
+    <text x="515.5" y="816" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10.5" fill="var(--box-text)">NoIOPLCheck()</text>
+
+    <rect x="619" y="784" width="179" height="46" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+    <text x="708.5" y="812" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" fill="var(--box-text)">CPU_Exception()</text>
+
+    <!-- Fanout connectors from Step 4 down to the example call-site boxes: drop, horizontal trunk at y=742, drop into each box -->
+    <line x1="420" y1="722" x2="420" y2="742" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="129.5" y1="742" x2="708.5" y2="742" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="129.5" y1="742" x2="129.5" y2="784" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="322.5" y1="742" x2="322.5" y2="784" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="515.5" y1="742" x2="515.5" y2="784" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="708.5" y1="742" x2="708.5" y2="784" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+
+    <!-- Footer -->
+    <text x="420" y="866" text-anchor="middle" font-size="12" fill="var(--footer-text)" font-weight="600">Every interrupt, software trap, and CPU-detected fault reaches this same function</text>
+    <text x="420" y="886" text-anchor="middle" font-size="11" fill="var(--footer-subtext)">CPU_Interrupt() doesn't know or care which call site got it here — only the type flag differs (§7.5)</text>
+
+    <text x="420" y="918" text-anchor="middle" font-size="10.5" fill="var(--footer-subtext)" font-style="italic">A fifth path exists too: the NMI line bypasses the PIC entirely and calls</text>
+    <text x="420" y="934" text-anchor="middle" font-size="10.5" fill="var(--footer-subtext)" font-style="italic">CPU_Interrupt(2, 0, reg_eip) directly — the same type=0 a hardware IRQ uses (§7.7)</text>
+</svg>

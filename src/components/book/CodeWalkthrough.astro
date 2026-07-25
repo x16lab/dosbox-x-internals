@@ -1,0 +1,45 @@
+---
+interface Props {
+  title?: string;
+}
+
+const { title } = Astro.props;
+---
+
+<figure class="code-walkthrough">
+  {title && <figcaption>{title}</figcaption>}
+  <div class="code-wrap">
+    <slot />
+  </div>
+</figure>
+
+<style>
+  .code-walkthrough {
+    margin: calc(var(--baseline) * 1.5) 0;
+    border: var(--hairline);
+    background: var(--color-surface);
+  }
+
+  .code-walkthrough figcaption {
+    padding: 0.75rem var(--baseline);
+    border-bottom: var(--hairline);
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .code-wrap {
+    padding: var(--baseline);
+    overflow-x: auto;
+  }
+
+  .code-wrap :global(pre) {
+    margin: 0;
+    border: none;
+    padding: 0;
+    background: transparent;
+  }
+</style>

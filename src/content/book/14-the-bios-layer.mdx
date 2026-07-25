@@ -1,0 +1,329 @@
+---
+title: "The BIOS Layer"
+description: "What DOSBox-X's BIOS actually implements versus stubs out, and how the INT 10h, 13h, 16h, and 1Ah service tables sit directly on top of the device chapters that came before."
+order: 14
+chapterSlug: "the-bios-layer"
+part: "software-layers"
+---
+# Chapter 14 — The BIOS Layer {#chapter-14-the-bios-layer}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 14.1 A ROM Made of Escape Hatches {#a-rom-made-of-escape-hatches}
+
+Every previous device chapter in this book has had the same shape: a real chip, a datasheet, and a piece of DOSBox-X source code standing in for register-level behavior that chip actually had. The BIOS is different, and it's worth being precise about how.
+
+A real IBM PC BIOS is a ROM chip. It contains actual 8088 machine code, assembled once by the manufacturer, sitting at a fixed physical address and executed by the CPU exactly like any other program — the CPU cannot tell "BIOS code" and "application code" apart, because there is no such distinction at the hardware level. DOSBox-X, for the most part, does not model that ROM. There is no simulated chip select, no simulated ROM access timing, and for the common case no actual byte-for-byte BIOS image sitting in guest memory for the CPU to fetch and decode one instruction at a time. Instead, DOSBox-X's "BIOS" is mostly native C++ functions — the same functions this book has already been quoting — wired into the interrupt vector table through a mechanism this book has been calling *callbacks* since the interrupt-controller chapter.
+
+That mechanism deserves a closer look here, because it's the seam the entire chapter sits on. When DOSBox-X wants an interrupt vector to reach native code instead of guest code, it doesn't just record a function pointer somewhere invisible to the emulated machine — it writes real bytes into the emulated address space that a real CPU would decode as legitimate (if unusual) instructions. `src/cpu/core_normal/prefix_none.h` shows what those bytes actually mean to the CPU core:
+
+```cpp
+CASE_B(0xfe)                                        /* GRP4 Eb */
+    {
+        GetRM;Bitu which=(rm>>3)&7;
+        switch (which) {
+        case 0x00:                                  /* INC Eb */
+            RMEb(INCB);
+            break;
+        case 0x01:                                  /* DEC Eb */
+            RMEb(DECB);
+            break;
+        case 0x07:                                  /* CallBack */
+            {
+                Bitu cb=Fetchw();
+                FillFlags();SAVEIP;
+                return (Bits)cb;
+            }
+```
+
+Opcode `0xFE` is a real 8088 instruction — GRP4, a byte-sized increment/decrement group. Its `reg` field only ever legitimately held two values on real hardware, 0 (`INC`) and 1 (`DEC`); DOSBox-X repurposes the otherwise-illegal encoding `reg=7` (the byte `0x38` in the ModRM position) as an escape hatch. When the decoder sees it, it doesn't increment or decrement anything — it reads a 16-bit callback ID immediately following the opcode and returns control to the emulator's outer loop, which dispatches to whatever native C++ function that ID names. Every "BIOS routine" this chapter discusses is, from the CPU's point of view, one of these two-and-a-half-byte stubs sitting in guest memory, dressed up to look like ordinary code because — mechanically — it is ordinary code, just code that happens to trap out the instant it runs.
+
+`src/cpu/callback.cpp` shows what gets assembled around that trap for two of this chapter's four interrupts. For INT 16h:
+
+```cpp
+case CB_INT16:
+    phys_writeb(physAddress+0x00,(uint8_t)0xFB);       //STI
+    if (use_cb) {
+        phys_writeb(physAddress+0x01,(uint8_t)0xFE);   //GRP 4
+        phys_writeb(physAddress+0x02,(uint8_t)0x38);   //Extra Callback instruction
+        phys_writew(physAddress+0x03,(uint16_t)callback);   //The immediate word
+        physAddress+=4;
+    }
+    phys_writeb(physAddress+0x01,(uint8_t)0xCF);       //An IRET Instruction
+```
+
+And for INT 13h, the sequence goes further — it embeds a second, genuinely executable path back into itself:
+
+```cpp
+case CB_INT13:
+    phys_writeb(physAddress+0x00,(uint8_t)0xFB);       //STI
+    ...
+    phys_writeb(physAddress+0x01,(uint8_t)0xCF);       //An IRET Instruction
+    phys_writew(physAddress+0x02,(uint16_t)0x0ECD);    // int 0e
+    phys_writeb(physAddress+0x04,(uint8_t)0xCF);       //An IRET Instruction
+    // for the image disk support to call
+    phys_writew(physAddress+0x05,(uint16_t)0x13CD);    // int 13
+```
+
+The `STI` at the front isn't decoration — a real BIOS interrupt handler re-enables interrupts near its start so a long-running service doesn't block the timer tick or keyboard IRQ for its entire duration, and DOSBox-X's stub reproduces that timing behavior rather than skipping straight to the trap. The embedded `INT 13h`/`INT 0Eh` bytes further down exist so that *other* code — the comment names El Torito CD-ROM boot support specifically — can reach this same handler through a genuine interrupt instruction rather than a raw far call, because some of that supporting code expects a real vector to invoke, not a private entry point. Even the escape hatch has to look enough like real hardware for other real-hardware-shaped code to call it correctly.
+
+There's one place this whole arrangement is set aside entirely, and it's worth knowing about before the rest of this chapter treats "BIOS service" and "native C++ function" as interchangeable. `src/ints/int10.cpp` supports loading an actual VGA BIOS ROM image — a real byte-for-byte dump from real graphics hardware — and mapping it directly into the guest address space instead of installing the native `INT10_Handler`:
+
+```cpp
+if (VGA_BIOS_Size > 0) {
+    LOG(LOG_MISC,LOG_DEBUG)("VGA BIOS occupies segment 0x%04x-0x%04x",(int)VGA_BIOS_SEG,(int)VGA_BIOS_SEG_END-1);
+    if (!MEM_map_ROM_physmem(0xC0000,0xC0000+VGA_BIOS_Size-1))
+        LOG(LOG_MISC,LOG_WARN)("INT 10 video: unable to map BIOS");
+}
+```
+
+When this path is active, INT 10h calls aren't trapped by DOSBox-X's C++ at all — the emulated CPU core genuinely fetches and executes whatever instructions the real ROM image contains, the same way it executes DOS programs. DOSBox-X even builds a tiny compatibility stub elsewhere in memory for this mode, because the real ROM image expects a specific fixed address to exist:
+
+```cpp
+/* If machine=vgaonly, make a dummy stub routine at 0xF000:0xF065 if the user is using the stock IBM VGA ROM BIOS.
+ * It calls INT 42h for unknown functions. INT 42h is NOT the previous INT 10h handler but is a hardcoded address
+ * specific to VGA-based IBM PCs of the time period. */
+if (IS_VGA_ARCH && svgaCard == SVGA_None && VGA_BIOS_use_rom) {
+    PhysPt base = ROMBIOS_GetMemory(3,"IBM BIOS dummy INT 10h stub for VGA BIOS",/*align*/1,0xFF065); /* 0xF000:0xF065 */
+    phys_writew(base+0,0xC031);        // XOR AX,AX
+    phys_writeb(base+2,0xCF);          // IRET
+}
+```
+
+So "the BIOS" in DOSBox-X is not one thing. Most of the time it's native code wearing a two-byte disguise; some of the time, by deliberate configuration choice, it's a real ROM dump being executed exactly as written, with DOSBox-X's own code reduced to placing a two-instruction placeholder at the one fixed address that ROM assumes will already be there. The rest of this chapter is about the common case — the native stand-ins — and specifically about how much of the *real* BIOS behavior each one actually reproduces, versus how much it simply declines to.
+
+### Source map for this chapter {#source-map-for-this-chapter}
+
+| Interrupt | DOSBox-X location |
+|---|---|
+| INT 10h (video services) | `src/ints/int10.cpp`, with mode-set and VESA logic split across `int10_modes.cpp`, `int10_vesa.cpp`, `int10_pal.cpp` |
+| INT 13h (disk services) | `src/ints/bios_disk.cpp` |
+| INT 16h (keyboard services) | `src/ints/bios_keyboard.cpp` |
+| INT 1Ah (time/date/RTC/PCI services) | `src/ints/bios.cpp` |
+| Callback trap mechanism | `src/cpu/callback.cpp`, `src/cpu/core_normal/prefix_none.h` |
+
+## 14.2 INT 10h: Mostly a Real Video BIOS {#int-10h-mostly-a-real-video-bios}
+
+Set Video Mode — function `AH=0x00`, the single most-called BIOS video service in the entire DOS era — is not a stub by any definition. The DOSBox-X handler branches through Tandy-specific CGA compatibility modes, DOS/V double-byte character-set text modes, J-3100 CGA-emulation quirks, and SVGA-card-specific mode number remapping before it ever calls `INT10_SetVideoMode()`, which is itself backed by the mode-table machinery this book's VGA chapter already examined. The same is true of most of this interrupt's surface: scrolling, character/attribute writes, palette manipulation, font loading, and the VESA extension functions are each genuinely implemented against DOSBox-X's own VGA model, not faked.
+
+That makes the places where it *isn't* implemented easy to spot, because they stand out against everything around them. Function `AH=0x04`, "read light pen position," is one line and one comment:
+
+```cpp
+case 0x04:                                          /* read light pen pos YEAH RIGHT */
+    /* Light pen is not supported */
+    reg_ax=0;
+    break;
+```
+
+The light pen was a real IBM PC input device — a stylus that reported screen position by detecting the CRT's electron beam as it scanned past — and it was already an obscure peripheral by the time most DOS software existed. DOSBox-X doesn't attempt to simulate the physical phenomenon a light pen depended on (there's no scanning beam to detect in a modern display pipeline); it just always reports "no light pen," which is the correct answer for the overwhelming majority of machines this function was ever called on anyway.
+
+VESA support (`AH=0x4F`) sits in an interesting middle position: fully implemented, but only reachable at all under specific conditions.
+
+```cpp
+case 0x4f:                                          /* VESA Calls */
+    if ((!IS_VGA_ARCH) || !(svgaCard==SVGA_S3Trio||svgaCard==SVGA_DOSBoxIG))
+        break;
+    if (int10.vesa_oldvbe10 && reg_al >= 6) /* Functions 6 and up did not exist until VBE 1.2 (or 1.1?) */
+        break;
+```
+
+VESA extensions only exist here when the emulated card is specifically an S3 Trio or DOSBox-X's own internal "DOSBoxIG" SVGA identity — pick a different SVGA chipset in the configuration and the entire function group falls through untouched, exactly reflecting the fact that VESA support was a real card-by-card feature on actual 1990s hardware, not a universal BIOS-level guarantee.
+
+The extended display functions added for VGA (`AH=0x1A` Display Combination, `0x1B` Functionality State, `0x1C` Video Save Area) are all gated the same way, at the top of each case:
+
+```cpp
+case 0x1B:                                          /* functionality State Information */
+    if (!IS_VGA_ARCH) break;
+```
+
+— because on real hardware these functions simply didn't exist before VGA either, and a CGA or EGA BIOS wouldn't have answered them at all. And the interrupt's catch-all `default` does what every BIOS int handler in this chapter eventually does with a function number it doesn't recognize: it logs and moves on, changing nothing in the guest's registers.
+
+```cpp
+default:
+    LOG(LOG_INT10,LOG_ERROR)("Function %4X not supported",reg_ax);
+//      reg_al=0x00;            //Successful, breaks marriage
+    break;
+```
+
+That commented-out line is left in the source on purpose, dry joke and all: an early version apparently tried reporting success (`AL=0`) for unrecognized functions, and it broke enough software depending on an unmodified `AL` that the "fix" is now permanently disabled, with the reasoning preserved as a punchline rather than deleted.
+
+## 14.3 INT 13h: A Whole Filesystem's Worth of Fidelity, and a Few Deliberate No-ops {#int-13h-a-whole-filesystem-s-worth-of-fidelity-and-a-few-deliberate-no-ops}
+
+INT 13h is where "implemented" reaches its most literal. This isn't a thin wrapper around a host-file-read call — `bios_disk.cpp` supports CHS and LBA addressing, drive-parameter queries for both floppy and hard-disk geometries, the INT 13h extensions (`AH=0x41`–`0x48`) that let real-mode software address drives past the original CHS limits, and El Torito "no emulation" CD-ROM booting, complete enough to report a specific IDE controller and master/slave position back to the caller that asks:
+
+```cpp
+phys_writeb(p + 0x01,(0/*no emulation*/) + ((INT13_ElTorito_IDEInterface >= 0) ? 0x40 : 0));
+phys_writeb(p + 0x02,INT13_ElTorito_NoEmuDriveNumber);
+if (INT13_ElTorito_IDEInterface >= 0) {
+        phys_writeb(p + 0x03,(unsigned char)(INT13_ElTorito_IDEInterface >> 1)); /* which IDE controller */
+        phys_writew(p + 0x08,INT13_ElTorito_IDEInterface & 1);/* bit 0: IDE master/slave */
+```
+
+That's genuine BIOS-level boot infrastructure, not a stand-in for it.
+
+And then there's Format Track (`AH=0x05`–`0x07`), which is real code doing nothing on purpose:
+
+```cpp
+case 0x05: /* Format track */
+    /* ignore it. I just [really, really] want FORMAT.COM to write the FAT structure for God's sake */
+    LOG_MSG("WARNING: Format track ignored\n");
+    if (driveInactive(drivenum)) {
+        reg_ah = 0xff;
+        CALLBACK_SCF(true);
+        return CBRET_NONE;
+    }
+    CALLBACK_SCF(false);
+    reg_ah = 0x00;
+    break;
+```
+
+(The source comment is blunter than the paraphrase above — the sentiment survives the edit.) On real floppy hardware, "format track" is a low-level operation that physically lays down sector headers and gaps on a disk surface before any filesystem can be written. DOSBox-X's disk images are already sector-addressable containers with no physical layer to reformat — there's nothing underneath for a real format command to do — so the handler's entire job is to report success without touching anything, purely so that `FORMAT.COM`'s higher-level logic (which does need to actually happen, writing the FAT and directory structures through ordinary sector writes) doesn't abort when the low-level step it expects to precede that work reports failure.
+
+Function `AH=0x17`, "Set disk type for format," gets the same treatment, and the comment names the exact reason it exists at all:
+
+```cpp
+case 0x17: /* Set disk type for format */
+    /* Pirates! needs this to load */
+    killRead = true;
+    reg_ah = 0x00;
+    CALLBACK_SCF(false);
+    break;
+```
+
+*Sid Meier's Pirates!* calls this function during its own loading sequence, and — like the light pen case in the previous section — the correct behavior for essentially every piece of real software that will ever call it is simply "report success," so that's what the stub does, with no drive-type table behind it at all.
+
+`AH=0x15`, "Get disk type," carries a similar attribution for a different reason — this one exists to correctly *detect* hardware, not just placate a loader:
+
+```cpp
+case 0x15: /* Get disk type */
+    /* Korean Powerdolls uses this to detect harddrives */
+    LOG(LOG_BIOS,LOG_WARN)("INT13: Get disktype used!");
+```
+
+Both comments are small archaeological artifacts in their own right: they record which specific piece of commercial software forced a particular corner of the INT 13h surface to be implemented at all, in a chip whose full real specification is otherwise mostly dead weight to a modern emulator serving disk images instead of physical drives.
+
+The interrupt's `default` case draws the same boundary INT 10h's did, in the vocabulary specific to disk services — `AH=0xFF` and the carry flag set, which is how real BIOS disk services universally signal "this operation failed":
+
+```cpp
+default:
+    LOG(LOG_BIOS,LOG_ERROR)("INT13: Function %x called on drive %x (dos drive %d)", (int)reg_ah, (int)reg_dl, (int)drivenum);
+    reg_ah=0xff;
+    CALLBACK_SCF(true);
+```
+
+## 14.4 INT 16h: The Keyboard BIOS Sitting Directly on @chapter(dma-and-pit "Chapter 11")'s Hardware {#int-16h-the-keyboard-bios-sitting-directly-on-chapter-11-s-hardware}
+
+INT 16h is the shortest distance this book has drawn yet between a device chapter and the BIOS layer sitting on top of it. Function `AH=0x03`, "Set Typematic Rate and Delay," doesn't touch any DOSBox-X-internal state at all — it writes straight through to the real keyboard-controller command port this book has already covered:
+
+```cpp
+case 0x03:  /* SET TYPEMATIC RATE AND DELAY */
+    if (reg_al == 0x00) { // set default delay and rate
+        IO_Write(0x60,0xf3);
+        IO_Write(0x60,0x20); // 500 msec delay, 30 cps
+    } else if (reg_al == 0x05) { // set repeat rate and delay
+        IO_Write(0x60,0xf3);
+        IO_Write(0x60,(reg_bh&3)<<5|(reg_bl&0x1f));
+    }
+```
+
+`0xF3` is the real 8042/AT keyboard controller's "set typematic rate/delay" command byte, sent to port `0x60` exactly as a real BIOS would send it to a real controller. There is no separate "BIOS-level" notion of typematic rate here to fake — the BIOS service *is* the two-byte controller command, passed through unchanged.
+
+Function `AH=0x00`, "Get Keystroke," is a blocking call by specification: real software expects it to simply not return until a key is available. DOSBox-X can't actually block the emulated CPU — nothing else in the virtual machine would run — so it fakes the wait with a small, deliberate trick:
+
+```cpp
+case 0x00: /* GET KEYSTROKE */
+    if (int16_unmask_irq1_on_read)
+        PIC_SetIRQMask(1,false); /* unmask keyboard */
+    ...
+    if ((get_key(temp)) && (!IsEnhancedKey(temp))) {
+        /* normal key found, return translated key in ax */
+        reg_ax=temp;
+    } else {
+        /* enter small idle loop to allow for irqs to happen */
+        reg_ip+=1;
+    }
+    break;
+```
+
+If no key is waiting, the handler doesn't spin or sleep — it nudges the instruction pointer forward by one byte and returns. The reason that single-byte nudge works is visible in the `CB_INT16` assembly from @section(the-bios-layer/a-rom-made-of-escape-hatches): right after the callback trap and its two-byte ID, the stub lays down an `IRET` — and then, past that, twelve `NOP` bytes, followed by a short `jmp` (`0xEB 0xED`) whose displacement lands exactly back on the callback trap itself. Ordinarily, control returns from the C++ handler to the byte right after the trap — the `IRET` — and the interrupt ends normally, key in hand. But bumping `reg_ip` by one skips past the `IRET` and lands one byte into the `NOP` run instead; the CPU idles through those twelve `NOP`s (which is exactly the window pending interrupts — IRQ1's keyboard chapter and IRQ0's timer tick alike — get to fire), then hits the trailing `jmp` and lands back on the trap opcode, calling straight back into `INT16_Handler()` on its own. The "blocking" BIOS call is, mechanically, a tight polling loop the stub builds for itself out of one deliberately mis-set byte of `IP` and a dozen throwaway `NOP`s.
+
+The interrupt has its own quiet piece of software archaeology, too — a defensive comment protecting a specific DOS-era program's expectations rather than the BIOS specification's:
+
+```cpp
+/* NOTE: The FreeDOS EDIT.COM editor built into DOSBox-X has a problem where if
+ *       this call return AX=0 and ZF=0, it will treat it the same as if we had
+```
+
+And the same shape of `default` case closes out INT 16h that closed out INT 10h and INT 13h — recognize the function or don't, and if not, log it and leave the guest's registers alone:
+
+```cpp
+default:
+    LOG(LOG_BIOS,LOG_ERROR)("INT16:Unhandled call %02X",reg_ah);
+    break;
+```
+
+## 14.5 INT 1Ah: One Vector, Three Unrelated Jobs {#int-1ah-one-vector-three-unrelated-jobs}
+
+If INT 16h shows this chapter's cleanest line back to a device chapter, INT 1Ah shows its messiest — because on real hardware, INT 1Ah was never one coherent service. It's the BIOS's system-timer interface, its real-time-clock interface, *and*, tacked on decades later because nothing else claimed the vector, a PCI BIOS entry point. DOSBox-X's `INT1A_Handler` in `bios.cpp` inherits all three jobs in the same switch statement, because that's genuinely how the real specification grew.
+
+The system-timer half (`AH=0x00`/`0x01`) reads and writes a 32-bit tick counter at a fixed, famous memory address — `0x46C`, the BIOS data area's `BIOS_TIMER` field, defined right in `include/bios.h`:
+
+```
+#define BIOS_TIMER    0x46c /* uint32_t Timer ticks (at 18.2Hz) since midnight */
+```
+
+18.2 Hz is not a coincidence or a rounding choice — it's the same PIT channel-0 tick rate @chapter(dma-and-pit) derived directly from the 8253/8254's input clock and the BIOS's chosen 16-bit divisor. INT 1Ah's "get system time" doesn't run its own clock; it reads a counter that channel 0's own IRQ0 handler increments once per real interrupt, in the exact hardware chain the DMA/PIT chapter already traced end to end.
+
+That connection cuts both ways, and `timer.cpp` documents a case where it broke a piece of real software rather than merely explaining one. A demoscene entry called *Pyromania* deliberately mis-programs channel 0 — writing its 16-bit count as three bytes instead of two, which per the datasheet leaves the channel latched and halted rather than running — and then tries to time a delay loop by reading `BIOS_TIMER` through this exact INT 1Ah service. Since the channel never restarts, IRQ0 never fires again, and nothing ever increments the counter the demo is waiting on. DOSBox-X's own comment doesn't hedge about whose fault the resulting hang is:
+
+```cpp
+// emulation is correct that the demo will hang at that point and the hang is not DOSBox-X's
+// fault.
+```
+
+The real-time-clock half of the same interrupt (`AH=0x02`–`0x05`) reads and writes actual CMOS register offsets — hours at `0x04`, minutes at `0x02`, seconds at `0x00`, the century byte at `0x32` — through the same kind of direct hardware pass-through INT 16h used for typematic rate:
+
+```cpp
+case 0x02:  /* GET REAL-TIME CLOCK TIME (AT,XT286,PS) */
+    InitRtc();
+    if (RtcUpdateDone()) {
+        reg_ch = ReadCmosByte(0x04);    // hours
+        reg_cl = ReadCmosByte(0x02);    // minutes
+        reg_dh = ReadCmosByte(0x00);    // seconds
+        reg_dl = ReadCmosByte(0x0b) & 0x01; // daylight saving time
+        for (unsigned int c=0;c < 4;c++) CALLBACK_Idle();
+    }
+```
+
+That trailing `CALLBACK_Idle()` loop carries its own attribution, repeated verbatim at every RTC read and write case in the handler:
+
+```cpp
+/* 2023/10/06 - Let interrupts and CPU cycles catch up and the RTC clock a chance to tick. This is needed for
+ * "Pizza Tycoon" which appears to start by running in a loop reading time from the BIOS and writing
+ * time to INT 21h in a loop until the second value changes. */
+```
+
+*Pizza Tycoon*, it turns out, busy-waits on the RTC seconds value changing, in a loop tight enough that without deliberately yielding a few cycles back to the rest of the emulated machine, the clock chip never gets a chance to actually tick between the game's reads — an almost exact structural echo of the Descent to Undermountain PIT quirk @chapter(dma-and-pit) already covered, this time on the RTC side of the same interrupt rather than the PIT side.
+
+The third job sharing this vector has nothing to do with time at all. `AH=0xB1` is the real-mode PCI BIOS entry point, added to the PC BIOS specification long after INT 1Ah's clock functions were already established, simply because no more sensible vector existed to claim by the time PCI bus enumeration needed a real-mode calling convention:
+
+```cpp
+case 0xb1:      /* PCI Bios Calls */
+    if (pcibus_enable) {
+        switch (reg_al) {
+            case 0x01:  // installation check
+                if (PCI_IsInitialized()) {
+                    reg_ah=0x00;
+                    reg_al=0x01;    // cfg space mechanism 1 supported
+                    reg_bx=0x0210;  // ver 2.10
+```
+
+This isn't DOSBox-X inventing an odd home for PCI services — it's DOSBox-X's `INT1A_Handler` correctly reproducing a genuinely strange piece of real BIOS history, where "the clock interrupt" and "the PCI bus interrogation interrupt" are, by specification, the identical vector, distinguished only by which value happens to be sitting in `AH` when software calls it.
+
+## 14.6 What Carries Forward {#what-carries-forward}
+
+Line these four interrupts up and a pattern falls out that has nothing to do with how much code each one contains. INT 10h and INT 13h are both mostly real implementations with a small number of named, deliberate stubs sitting inside them; INT 16h is almost entirely a thin pass-through to hardware this book has already modeled in earlier chapters; INT 1Ah is barely one interrupt at all, but three historically unrelated services that happen to share a vector number because that's what the specification actually did. None of that variation is arbitrary. Every stub this chapter found — the light pen, Format Track, Set Disk Type for Format — exists exactly where the real BIOS function depended on physical behavior DOSBox-X has no reason to model (a scanning CRT beam, a physical disk surface) or where, in practice, only one specific commercial title out of thousands ever exercised that corner of the specification at all. Everywhere else, the interrupt table is not a facade sitting in front of the device chapters — it *is* those device chapters, wearing a calling convention.
+
+That's also why this chapter had to lean on the callback mechanism from @section(the-bios-layer/a-rom-made-of-escape-hatches) as heavily as it did: the BIOS layer's job is almost entirely translation — DOS register conventions in, hardware register writes (or, more often, a read of state some earlier chapter's C++ model already maintains) out — and the escape-hatch opcode is simply how DOSBox-X gets from one side of that translation to the other without pretending to execute a ROM image that, in the common case, was never loaded in the first place.
+
+---

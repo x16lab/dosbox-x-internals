@@ -1,0 +1,506 @@
+---
+title: "The Interpreter Core"
+description: "CPU_Core_Normal_Run()'s fetch/decode/execute loop. Covers the switch-as-jump-table opcode dispatch with its dispatch-space folding trick, the ModRM/effective-address table, and lazy flags — deferring flag-bit computation until a conditional jump actually asks. Also covers the family of related cores that reuse this same loop under different constraints: compile-time segment-limit elision for 8086/286 targets, prefetch-queue emulation modeling real bus-fetch timing, and core_full's table-driven load/op/save pipeline with page-fault rollback and its deliberate Trap Flag punt back to the normal core."
+order: 6
+chapterSlug: "interpreter-core"
+part: "the-cpu"
+---
+# Chapter 6 — The Interpreter Core {#chapter-6-the-interpreter-core}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 6.1 Where the Last Two Chapters Land {#where-the-last-two-chapters-land}
+
+It's worth pausing before opening this chapter's source files to notice what's already been built. @chapter(main-loop-and-event-scheduler) gave the CPU a cycle budget and a queue of events it isn't allowed to run past. @chapter(memory-model-and-address-translation) gave every memory access a translation pipeline and a table of handlers it isn't allowed to reach around. Neither chapter, on its own, executed a single instruction. This is the chapter where those two constraints finally meet the thing they were built to constrain: a loop that fetches bytes, decodes them into operations, and carries them out.
+
+That loop is `CPU_Core_Normal_Run()`, in `src/cpu/core_normal.cpp` — DOSBox-X's interpreter core, the simplest of its several CPU cores and the one every other core (including the dynamic recompiler two chapters from now) gets measured against for correctness. "Simplest" doesn't mean naive, though. As you'll see, it earns its speed the same way the memory subsystem did: by keeping the common case as cheap as possible and pushing anything unusual into a clearly separated slow path.
+
+## 6.2 The Shape of the Loop {#the-shape-of-the-loop}
+
+Strip away the debug hooks and exception handling, and `CPU_Core_Normal_Run()` reduces to this:
+
+```cpp
+Bits CPU_Core_Normal_Run(void) {
+    if (CPU_Cycles <= 0)
+        return CBRET_NONE;
+
+    while (CPU_Cycles-- > 0) {
+        LOADIP;
+        // ...per-instruction setup...
+
+    restart_opcode:
+        switch (core.opcode_index + Fetchb()) {
+            #include "core_normal/prefix_none.h"
+            #include "core_normal/prefix_0f.h"
+            #include "core_normal/prefix_66.h"
+            #include "core_normal/prefix_66_0f.h"
+            default:
+                CPU_Exception(6, 0);
+                continue;
+        }
+        SAVEIP;
+    }
+    FillFlags();
+    return CBRET_NONE;
+}
+```
+
+Two things should jump out immediately, because both are direct payoffs of the previous two chapters.
+
+First: **`CPU_Cycles` is the loop counter.** Not a fixed number of instructions, not a timer — the exact cycle budget that @chapter(main-loop-and-event-scheduler)'s `PIC_RunQueue()` computed and handed over before this function was ever called. The variable is named `CPU_Cycles`, but in the normal interpreter each pass through the `while` loop is one instruction-execution slot, not a literal x86 clock cycle — `CPU_Cycles = 100` does not mean "run 100 CPU clocks," it means "be permitted up to 100 instruction iterations." Execution budget is permission, not obligation: the core may return early but never runs past its grant. `CPU_Core_Normal_Run()` doesn't know or care why its budget is 40 cycles this time and 4,000 the next; it just decrements `CPU_Cycles` once per instruction and returns control to the scheduler the moment the budget hits zero. This is the CPU core's half of the contract @chapter(main-loop-and-event-scheduler) described from the scheduler's side — a function that gets invoked in short, rationed bursts rather than one that owns the loop.
+
+Second: **every fetch and every memory operand goes through the mechanism @chapter(memory-model-and-address-translation) built.** `Fetchb()`, which pulls the next opcode byte, is defined as a thin wrapper around `LoadMb`, and `LoadMb` is a macro for `mem_readb_inline` — the exact TLB-checking, `PageHandler`-dispatching function from @section(memory-model-and-address-translation/the-tlb-making-the-common-case-fast):
+
+```cpp
+#define LoadMb(off) mem_readb_inline(off)
+
+static INLINE uint8_t Fetchb() {
+    uint8_t temp = LoadMb(core.cseip);
+    core.cseip += 1;
+    return temp;
+}
+```
+
+So instruction fetch isn't a special, privileged read — it's an ordinary memory read, subject to the same TLB fast path and `PageHandler` slow path as any data access. There is no separate "instruction memory" subsystem in this core; @chapter(memory-model-and-address-translation)'s memory model is the only memory model, for code and data alike. Instruction fetch ultimately enters the same guest-memory machinery used by data accesses.
+
+One more path is worth naming up front, because it's a deliberate exception to the loop above: when the Trap Flag (`TF`) is set, `CPU_Core_Normal_Run()` does not run this `while` loop at all. It hands off to a dedicated single-step path, `CPU_Core_Normal_Trap_Run()`, which executes exactly one instruction and then raises the `#DB` debug exception — the single-step semantics real DOS-era self-decrypting demos depended on. @section(interpreter-core/a-different-shape-entirely) shows what happens when *another* core hits the same flag. It's a reminder that even the reference interpreter keeps a specialised exit ramp for behavior the plain loop can't express.
+
+The normal core is not a monolithic CPU emulator. It is a set of specialised mechanisms assembled around a very small instruction-execution loop — and each mechanism in this chapter answers one question about that loop:
+
+| Question | Mechanism |
+| --- | --- |
+| How much may I execute? | `CPU_Cycles` (the scheduler's budget) |
+| Where is the next byte? | `core.cseip` (the current fetch address) |
+| Which instruction is it? | the `switch` opcode dispatch |
+| Where are its operands? | the ModRM / effective-address table |
+| What happened to `FLAGS`? | lazy flags |
+| What changes for older CPUs? | compile-time segment-limit specialisation |
+| What changes for bus timing? | the prefetch queue |
+| What if the interpreter is organised differently? | `core_full`'s load/operate/save |
+
+Keep that skeleton in mind; every section below fills in one row.
+
+## 6.3 `core.cseip`: Keeping the Current Fetch Address {#core-cseip-the-instruction-pointer-already-translated}
+
+One detail worth calling out explicitly, because it's easy to skim past: `core.cseip` is not the raw `IP`/`EIP` register value. It's `CS`'s segment base — the cached, already-shifted base from segmentation — added once per instruction via `LOADIP`:
+
+```cpp
+#define GETIP    ((PhysPt)(core.cseip - SegBase(cs)))
+#define SAVEIP    reg_eip = GETIP;
+#define LOADIP    core.cseip = ((PhysPt)(SegBase(cs) + reg_eip));
+#define SegBase(c) SegPhys(c)
+```
+
+`SegBase` here is exactly `SegPhys()` from @section(memory-model-and-address-translation/segment-registers-in-dosbox-x-segs-phys) — the cached, already-shifted segment base the previous chapter walked through in detail. `LOADIP` runs once, at the top of each pass through the outer `while` loop, converting the architectural `EIP` register into a linear fetch address *after segmentation* for the *entire* instruction that follows — prefixes, opcode byte, ModRM byte, displacement, and immediate operands all get fetched by repeatedly advancing `core.cseip`, with no re-derivation of the segment base needed per byte. Only at the end (`SAVEIP`) does the core convert back to the architectural `EIP` value the rest of the CPU state machinery expects to see. This is a small thing, but it's a direct, visible consequence of the previous chapter's design: because the segment base has already been resolved and cached by the segment-register machinery, the interpreter does not need to reconstruct `CS.base + EIP` for every byte fetch. `LOADIP` performs segmentation — `CS.base + EIP` — and nothing more; it does not perform paging or TLB translation, which is a separate stage (covered in @chapter(memory-model-and-address-translation)) that this fetch address does not pass through here.
+
+## 6.4 Decoding Without a Real Opcode Table {#decoding-without-a-real-opcode-table}
+
+Here's where the interpreter earns its keep. A naive fetch/decode/execute loop reads a byte, looks it up in some kind of table (an array of function pointers, say), and calls the corresponding handler. DOSBox-X's normal core does something more direct: the `switch` statement *is* the opcode table, and the compiler builds a jump table out of it at compile time — no runtime array lookup, no function-pointer indirection for the common case, just a `switch` on the fetched byte.
+
+The cases collectively form the opcode dispatch table, `#include`d from separate files (`prefix_none.h`, `prefix_0f.h`, and their 32-bit-operand-size cousins) purely to keep any single translation unit from becoming unmanageable — at compile time they're all part of the same `switch`. A representative handful, from `prefix_none.h`:
+
+```cpp
+CASE_B(0x00)                                    /* ADD Eb,Gb */
+    RMEbGb(ADDB); break;
+CASE_B(0x02)                                    /* ADD Gb,Eb */
+    RMGbEb(ADDB); break;
+CASE_W(0x06)                                    /* PUSH ES */
+    Push_16(SegValue(es)); break;
+CASE_B(0x08)                                    /* OR Eb,Gb */
+    RMEbGb(ORB); break;
+```
+
+`CASE_B` and `CASE_W` aren't opcode variants in the ISA sense — they're how this core folds the CPU's default operand size into the same dispatch without writing every instruction twice:
+
+```cpp
+#define CASE_W(_WHICH)  case (OPCODE_NONE + _WHICH):
+#define CASE_D(_WHICH)  case (OPCODE_SIZE + _WHICH):   // only exists for 386+ cores
+#define CASE_B(_WHICH)  CASE_W(_WHICH) CASE_D(_WHICH)
+```
+
+And the `switch` itself is keyed not on the fetched byte alone, but on that byte plus an offset chosen once per instruction:
+
+```cpp
+core.opcode_index = cpu.code.big * (Bitu)0x200u;
+...
+switch (core.opcode_index + Fetchb()) {
+```
+
+`cpu.code.big` reflects whether the current code segment's default operand size is 16-bit or 32-bit (it flips, per instruction, if a `0x66` operand-size prefix byte was seen). `CASE_B`, by expanding to *both* the `OPCODE_NONE` and `OPCODE_SIZE` case labels for the same opcode number, means a byte-sized instruction like `ADD Eb,Gb` — whose behavior genuinely doesn't depend on the operand-size default, since it only ever touches a byte — gets reached correctly regardless of which "half" of the switch table `core.opcode_index` currently points into. `CASE_W`, used for instructions like `PUSH ES` that only exist in one width, only claims the 16-bit half. It's a compact way of encoding "does this opcode's behavior depend on the current operand-size default" directly into which macro the handler is written with, rather than branching on `cpu.code.big` inside every single handler body.
+
+The underlying trick is worth naming: **dispatch-space folding**. DOSBox-X does not ask `if (operand32) … else …` inside every opcode implementation. Instead it shifts the *numeric namespace* in which the opcode is dispatched — `core.opcode_index` selects which half (or quarter) of the combined table the `switch` lands in — and then the same opcode byte resolves to the width-appropriate handler. The picture is:
+
+```text
+                fetched opcode
+                       │
+                       ▼
+             + core.opcode_index
+                       │
+                       ▼
+             one combined switch
+              ┌────────┴────────┐
+              │                 │
+        default operand     overridden operand
+            size                size
+```
+
+That is the conceptual seed of the 1024-entry table @section(interpreter-core/a-different-shape-entirely) revisits for `core_full`.
+
+Prefix bytes (segment overrides, the address-size prefix, `REP`) don't get their own opcode handlers that fall through to the "next" instruction — they mutate `core` state and jump straight back to the top of decoding:
+
+```cpp
+#define DO_PREFIX_ADDR()                                    \
+    core.prefixes = (core.prefixes & ~PREFIX_ADDR) |        \
+                     (cpu.code.big ^ PREFIX_ADDR);          \
+    core.ea_table = &EATable[(core.prefixes & 1u) * 256u];  \
+    goto restart_opcode;
+```
+
+That `goto restart_opcode` is doing real work: it re-enters the same `switch` statement, one byte further into the instruction stream, with updated prefix state — effectively treating "decode one more prefix byte, then keep decoding" as a loop within the outer per-instruction loop, without ever leaving the function or touching `CPU_Cycles` again. A `MOV` instruction preceded by three redundant segment-override prefixes still consumes one iteration of the interpreter's `CPU_Cycles` budget, not four, because the outer `while (CPU_Cycles-- > 0)` only executes once per *instruction*, and everything from the first prefix byte through the final operand fetch happens inside a single pass, chained together by these `goto`s. That does not mean the prefixes are free in any broader timing sense; this loop counter is an execution-budget mechanism rather than a literal per-byte or per-clock timing model.
+
+## 6.5 Operands: The ModRM Byte and the EA Table {#operands-the-modrm-byte-and-the-ea-table}
+
+Most non-trivial x86 instructions encode their operands through a ModRM byte, which says (among other things) whether the second operand is a register or a memory location, and if memory, how to compute its effective address from base/index registers and a displacement. DOSBox-X handles the register-vs-memory fork with a runtime check and the effective-address computation with a function-pointer table, `EATable`, indexed directly by the ModRM byte's low bits:
+
+```cpp
+#define GetEAa                              \
+    PhysPt eaa = EALookupTable[rm]();       \
+    (void)eaa
+
+#define RMEbGb(inst)                                             \
+    {                                                             \
+        GetRMrb;                                                  \
+        if (rm >= 0xc0) { GetEArb; inst(*earb, *rmrb, LoadRb, SaveRb); } \
+        else { GetEAa; inst(eaa, *rmrb, LoadMb, SaveMb); }        \
+    }
+```
+
+`rm >= 0xc0` is the register-operand case — ModRM values `0xC0`–`0xFF` mean "the second operand is a register, not memory," and the handler dispatches straight to a register read/write with no address computation at all. Anything below `0xC0` means "compute an effective address," and `EALookupTable[rm]()` calls the specific pre-generated handler function for that ModRM encoding — one of a set of small handler functions, each corresponding to one of the possible ModRM addressing forms, so the general case of "which registers and what displacement contribute to this address" is resolved by table lookup rather than by a chain of runtime conditionals. `core.ea_table` — swapped out by `DO_PREFIX_ADDR()` above — is what lets the same ModRM byte mean a 16-bit addressing-mode table entry in one instruction and a 32-bit one in the next, depending on whether an address-size prefix was seen.
+
+Once `eaa` (a fully resolved linear address) comes out of that table, it's handed straight to `LoadMb`/`SaveMb` — @chapter(memory-model-and-address-translation)'s `mem_readb_inline`/`mem_writeb_inline` again. The ModRM/EA machinery's entire job is to answer "what address," and the moment it has an answer, it's back in the world the previous chapter already built.
+
+## 6.6 Flags: Computed Only When Someone Asks {#flags-computed-only-when-someone-asks}
+
+The last piece worth walking through is one of the normal core's more distinctive design choices: **lazy flags**. Real x86 hardware updates the FLAGS register's condition bits (`ZF`, `SF`, `CF`, `OF`, and so on) as a side effect of most arithmetic and logical instructions. A naive interpreter would recompute all of those bits after every single `ADD`, `SUB`, `AND`, and so forth — mostly wasted work. Arithmetic instructions often produce flags that are never subsequently observed before another flag-producing operation supersedes them, which is the real reason deferring the computation pays off.
+
+DOSBox-X's normal core instead records *what kind* of operation just happened and *what its inputs and result were*, and defers the actual bit computation until something asks:
+
+```cpp
+#define ADDB(op1,op2,load,save)         \
+    lf_var1b = load(op1); lf_var2b = op2;    \
+    lf_resb = lf_var1b + lf_var2b;           \
+    save(op1, lf_resb);                      \
+    lflags.type = t_ADDb;
+```
+
+`lflags` — operands, result, and an operation-type tag (`t_ADDb`, `t_SUBw`, `t_ANDd`, and so on for every flag-affecting instruction and width) — is all that gets written. The architectural flag bits are not necessarily materialised yet. The payoff comes when something later asks a flags-dependent question — a conditional jump testing `ZF`, for instance — via accessor functions like `get_ZF()`:
+
+```cpp
+uint32_t get_ZF(void) {
+    Bitu type = lflags.type;
+    switch (type) {
+    case t_UNKNOWN:
+        return GETFLAG(ZF);
+    case t_ADDb: case t_ORb: case t_ADCb: /* ...every byte-width op... */
+    case t_SUBb: case t_CMPb: case t_INCb: case t_DECb:
+        return (lf_resb == 0);
+    // ...t_ADDw/t_SUBw/... and t_ADDd/t_SUBd/... cases follow the same pattern
+    }
+}
+```
+
+`ZF` is trivially "was the result zero" for nearly every operation type, so `get_ZF()` computes it on demand straight from the recorded result — no separate flag-update step ever ran. `get_OF()`, `get_CF()`, and the others follow the same shape but with operation-specific formulas (carry-out for `ADD`, borrow for `SUB`, and so on), because unlike `ZF`, those flags genuinely do depend on which operation produced the result, not just the result's value.
+
+This matters for two reasons that tie back to the rest of the chapter. First, it's the same fast-path/slow-path instinct as the TLB from @chapter(memory-model-and-address-translation) and the cycle-budgeting from @chapter(main-loop-and-event-scheduler), applied a third time to a third kind of state: don't do the expensive thing (computing every flag bit) until something actually needs the answer, and remember just enough to answer cheaply when it's asked. Second, it constrains what the dynamic recompiler covered later in this book has to reproduce — any core claiming compatibility with this one has to get the *same* answers out of `get_ZF()`/`get_CF()`/etc. for the same instruction sequences, even if it never represents "lazy flags" as an explicit concept internally. `t_UNKNOWN`, the fallback case that reads the real, already-materialized `FLAGS` register bit directly, exists specifically for situations — an explicit `POPF`, a hardware interrupt, anything that sets flags from outside this lazy-evaluation scheme — where there's no recorded operation to derive an answer from, and the deferred-computation trick has to bottom out in a real stored value.
+
+Two state-model diagrams make the deferred/eager boundary concrete. First, the normal flow — an arithmetic instruction records enough to answer later, and only a flags-dependent query forces materialisation:
+
+```text
+  ADD/SUB/...  ──►  lflags{type, var1, var2, res}
+                            │
+              (no flag query yet: nothing else happens)
+                            │
+                  later: JZ / JNZ / CMP chain
+                            │
+                            ▼
+                  get_ZF()/get_CF()/...  ──►  reg_flags bit
+```
+
+And second, the "force eager" flow — something sets flags from outside the lazy scheme, so there is no recorded operation to derive an answer from, and the deferred computation bottoms out in the real stored `FLAGS` register:
+
+```text
+  POPF / interrupt / external flag write
+                            │
+                            ▼
+                  FLAGS  ──►  reg_flags (materialised)
+                            │
+                  get_*() sees t_UNKNOWN  ──►  GETFLAG(bit)
+```
+
+## 6.7 Putting the Chapter Together {#putting-the-chapter-together}
+
+Trace a single instruction — say, `ADD [BX+SI], AL` — through everything this chapter has covered, and every mechanism from the last three chapters shows up exactly once:
+
+1. The outer loop's cycle counter, handed down from @chapter(main-loop-and-event-scheduler)'s scheduler, permits one more pass.
+2. `LOADIP` resolves `CS:IP` into a linear fetch address using @chapter(memory-model-and-address-translation)'s cached segment base.
+3. `Fetchb()` reads the opcode byte through @chapter(memory-model-and-address-translation)'s TLB/`PageHandler` memory path — indistinguishable, from this core's point of view, from any other memory read.
+4. The `switch` on `core.opcode_index + opcode` dispatches straight to `RMEbGb(ADDB)`, no table lookup needed beyond what the compiler already built into the jump table.
+5. Because the ModRM byte encodes a memory operand, `EALookupTable[rm]()` computes the effective address — again a linear address, again bound for @chapter(memory-model-and-address-translation)'s memory path.
+6. `ADDB` performs the addition, writes the result back through `SaveMb` (@chapter(memory-model-and-address-translation), again), and records just enough state in `lflags` to answer any future flag query — without spending a single cycle computing bits nobody may ever ask for.
+7. `SAVEIP` writes the advanced instruction pointer back to `EIP`. The next iteration of the outer `while (CPU_Cycles-- > 0)` test consumes another unit of the budget on its way to deciding whether there is room for another pass — so the decrement is part of that loop test, not a separate explicit statement.
+
+None of that is exotic. It's a fetch/decode/execute loop, the same shape you'd sketch on a whiteboard for any interpreter. What makes it worth a whole chapter is how consistently it refuses to duplicate work the rest of the emulator already does — memory access, address translation, cycle accounting — and how consistently, in the one place it does introduce genuinely new machinery (lazy flags), it reaches for the same "defer the expensive part until it's actually needed" instinct that's shown up in every chapter so far.
+
+That consistency is also exactly what the next chapter puts under pressure. The dynamic recompiler exists because, for all its cleanliness, this interpreter still decodes and dispatches every instruction it executes, every single time — even a `MOV` inside a tight loop that runs the same ten bytes ten thousand times gets fetched, decoded, and dispatched ten thousand times over. @chapter(dynamic-recompilation) is the story of what changes when DOSBox-X stops re-decoding and starts remembering.
+
+
+
+## 6.8 `core_normal.cpp` Isn't the Only File Shaped Like @chapter(interpreter-core "Chapter 6") {#core-normal-cpp-isn-t-the-only-file-shaped-like-chapter-6}
+
+Before leaving the interpreter behind, it's worth looking sideways at several close relatives that live beside `core_normal.cpp`. @chapter(interpreter-core) has walked through `CPU_Core_Normal_Run()` as though it were *the* interpreter — and for the purposes of understanding the fetch/decode/execute loop, the ModRM/EA table, and lazy flags, it is. But `src/cpu/` ships several more files that either recompile that same loop under different constraints or, in one case, abandon its shape entirely while still answering to the same rules Chapters 3 and 4 laid down. `core_normal.cpp` is the reference interpreter, but not the only implementation in `src/cpu/`. None of these variants change anything this book has already covered about the cycle budget or the memory model — that's exactly the point. They're worth a short stop before @chapter(dynamic-recompilation) changes the dispatch story completely, because each one pushes on a different axis of "same contract, different machinery" than dynamic recompilation will.
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+Three are worth actually reading. One is worth a paragraph.
+
+## 6.9 Shared Source, Three Specialisations {#two-architectures-one-body}
+
+`core_normal_8086.cpp` and `core_normal_286.cpp` define `CPU_Core8086_Normal_Run()` and `CPU_Core286_Normal_Run()` — and if you diff either against @chapter(interpreter-core)'s `CPU_Core_Normal_Run()`, the loop, the `switch`, the `#include`d opcode tables are all the same body. What differs is a single macro, shadowing a global @chapter(interpreter-core) never had reason to mention: `do_seg_limits`.
+
+In the plain 386-and-up core, `do_seg_limits` is an ordinary runtime `bool`, checked wherever a segment limit might need enforcing (`core_normal/string.h`, `core_normal/table_ea.h`):
+
+```cpp
+extern bool do_seg_limits;   // include/cpu.h
+bool do_seg_limits = false;  // src/cpu/cpu.cpp — driven by the "segment limits" config option
+```
+
+`core_normal_8086.cpp` shadows that variable with a compile-time constant instead:
+
+```cpp
+/* Do not emulate segment limit exceptions on 8086. This turns the if() statements into if (0)
+ * and the C++ compiler optimizer should then completely omit the code for the 8086 cputype. */
+#define do_seg_limits (0)
+```
+
+Every `if (do_seg_limits) { ... }` in the shared `string.h`/`table_ea.h` headers — the exact same headers @chapter(interpreter-core) already covered — becomes `if (0) { ... }` for this translation unit, and the optimizer removes it outright. An 8086 has no concept of a segment limit to violate; this isn't a feature flag deciding not to check, it's the check not existing in the compiled binary at all.
+
+`core_normal_286.cpp` takes a half-step instead of a full one, because it's shared between two architectures, not one:
+
+```cpp
+/* wrap original variable name in inline function prior to #define, use inline function name in redefine of do_seg_limits */
+static inline bool _seg_limit_check(void) {
+    return do_seg_limits;
+}
+
+/* Do not emulate segment limit exceptions on 80186, DO emulate on 286. */
+#define do_seg_limits (_seg_limit_check() && CPU_ArchitectureType >= CPU_ARCHTYPE_286)
+```
+
+This translation unit compiles `CPU_Core286_Normal_Run()` once, but that one function serves both `cputype=80186` and `cputype=286` — the `CPU_ArchitectureType >= CPU_ARCHTYPE_286` half of the condition is a runtime fork inside a body that's otherwise identical for both, deciding at execution time whether "this instruction stream is running on the chip that actually has segment limits" is true. Three translation units, three answers to the same question — never check (8086), check only if the emulated chip is a 286 and not an 80186 (this file), check for real (the plain core) — and the difference is entirely in what gets asked, never in the surrounding interpreter body @chapter(interpreter-core) already covered. This is compile-time specialisation of shared interpreter source: the same loop, `switch`, and opcode tables are reused, and the only thing that changes between builds or configurations is how the `do_seg_limits` question resolves.
+
+That's the whole story for these two files. There's no new mechanism to learn here — which is itself worth noticing, given how much territory the next two sections cover under the same "recompiled interpreter" umbrella.
+
+## 6.10 The Bus Has Opinions Too {#the-bus-has-opinions-too}
+
+`core_prefetch.cpp`, `core_prefetch_286.cpp`, and `core_prefetch_8086.cpp` define `CPU_Core_Prefetch_Run()`, `CPU_Core286_Prefetch_Run()`, and `CPU_Core8086_Prefetch_Run()` respectively — and every one of them still `#include`s the exact opcode-handler headers @chapter(interpreter-core) walked through:
+
+```cpp
+#include "core_normal/prefix_none.h"
+#include "core_normal/prefix_0f.h"
+#include "core_normal/prefix_66.h"
+#include "core_normal/prefix_66_0f.h"
+```
+
+Despite the separate `*_prefetch` filenames, these are not a distinct dispatch core. They are the normal interpreter's existing opcode-dispatch machinery, recompiled with a different `Fetch` implementation and selected at startup by the emulated CPU type — a CPU-type selection knob layered onto the same decode/execute loop, not a parallel interpreter.
+
+Same `ADD`, same `RMEbGb`, same lazy-flags macros, same `EALookupTable`. What's different is what feeds them. @chapter(interpreter-core)'s `Fetchb()` read straight from guest memory via `mem_readb_inline`, once per byte, with no notion that a real 8086 or 386 doesn't fetch one byte at a time from the bus — it fetches in bursts, ahead of execution, into an on-chip prefetch queue, and stalls when that queue runs dry. `core_prefetch.cpp` models a queue that approximates that behavior — a *model* of likely 80386/80486 bus timing, not a transistor-level reproduction — and swaps it in underneath the unchanged opcode tables via a templated `Fetch<T>()`:
+
+```cpp
+template <class T> static inline T Fetch(void) {
+    T temp;
+    if (prefetch_hit<T>(core.cseip)) {
+        /* as long as prefetch hits are occurring, keep loading more! */
+        prefetch_lazyflush(core.cseip+sizeof(T));
+        if ((pq_fill - pq_start) < pq_limit) prefetch_filldword();
+        temp = prefetch_read<T>(core.cseip);
+    } else {
+        prefetch_init(core.cseip & (~(prefetch_unit-1ul))); /* fill prefetch starting on DWORD boundary */
+        prefetch_refill(pq_start + pq_reload); /* perhaps in the time it takes for a prefetch miss the 80486 can load two DWORDs */
+        temp = prefetch_read<T>(core.cseip);
+    }
+    core.cseip += sizeof(T);
+    return temp;
+}
+```
+
+A hit keeps the queue topped up one more dword ahead; a miss reinitializes the queue from scratch at the current fetch address and refills it, exactly the stall a real chip pays for jumping somewhere its prefetch logic didn't anticipate. The queue itself is a small sliding window (`prefetch_buffer`, capped at `MAX_PQ_SIZE`), and when it fills up, `prefetch_lazyflush()` slides the whole thing forward with a `memmove` rather than growing it — a literal FIFO, sized to match real silicon rather than DOSBox-X's convenience:
+
+```cpp
+static inline void prefetch_lazyflush(const Bitu w) {
+    if ((w - pq_start) >= pq_limit) {
+        memmove(prefetch_buffer, prefetch_buffer+prefetch_unit, pq_limit-prefetch_unit);
+        pq_start += prefetch_unit;
+        prefetch_filldword();
+    }
+}
+
+/* this implementation follows what I think the Intel 80386/80486 is more likely
+ * to do when fetching from prefetch and refilling prefetch --J.C. */
+
+That "more likely" is an honest tell: the prefetch queue is a behavioral model, and it has documented edges that the model does not try to capture. The 8086/8088 variant, in particular, carries an in-source `FIXME` noting that its refill mechanism fetches in 32-bit `DWORD`s and cannot represent the genuine 4-byte (8086) / shorter effective (8088) queue — the model approximates the queue's *presence and size*, not the exact width of each refill. Treat the queue sizes in the table above as faithful to the chips DOSBox-X is aiming at, with that approximation acknowledged rather than hidden.
+```
+
+That queue's size isn't a made-up constant, either — it's set per emulated architecture, and the config code cites its source directly in-line:
+
+```cpp
+} else if (cputype == "8086_prefetch") {   /* 6-byte prefetch queue ref [phatcode.net/.../11-02.html] */
+    cpudecoder = &CPU_Core8086_Prefetch_Run;
+    CPU_PrefetchQueueSize = 4;  /* Emulate the 8088 — more common in home PCs than a real 8086 */
+} else if (cputype == "80186_prefetch") {
+    cpudecoder = &CPU_Core286_Prefetch_Run;
+    CPU_PrefetchQueueSize = 6;
+} else if (cputype == "286_prefetch") {
+    cpudecoder = &CPU_Core286_Prefetch_Run;
+    CPU_PrefetchQueueSize = 6;
+} else if (cputype == "386_prefetch") {
+    cpudecoder = &CPU_Core_Prefetch_Run;
+    CPU_PrefetchQueueSize = 16;
+} else if (cputype == "486_prefetch") {
+    cpudecoder = &CPU_Core_Prefetch_Run;
+    CPU_PrefetchQueueSize = 32;
+```
+
+Note that `core_prefetch_286.cpp` does double duty for both `80186_prefetch` and `286_prefetch` — same reuse pattern as @section(interpreter-core/two-architectures-one-body)'s `core_normal_286.cpp`, just for timing instead of segment limits. Note also the comment choosing 4 bytes for `8086_prefetch` specifically because the 8088 — the chip actually found in most home PCs of the era, with an 8-bit external bus feeding a nominally 16-bit core — had a shorter effective queue than a true 8086. This is the same instinct as @chapter(what-is-dosbox-x)'s IRQ2/IRQ9 remap and @chapter(interrupts-exceptions-pic)'s cascade wiring: DOSBox-X isn't modeling "a prefetch queue" as an abstraction, it's modeling the specific size Intel shipped for the specific chip most of this software actually ran on.
+
+The other half of a real prefetch queue's behavior is what invalidates it — a queue that's fetched ahead of a jump is fetched from the *wrong place*. `CPU_Core_Prefetch_Run()` walks the just-fetched opcode byte through a small list of control-flow instructions before dispatch and throws the whole queue away for any of them (0F-prefixed opcodes are treated unconditionally as invalidating, without consulting the list at all). The list identifies the control-flow instructions DOSBox-X treats as queue-invalidating — not a claim that these are the *only* operations that ever flush a real chip's queue, but the set this model acts on:
+
+```cpp
+if (core.opcode_index & OPCODE_0F) invalidate_pq = true;
+else switch (next_opcode) {
+    case 0x70: /* ...through 0x7f, all Jcc */
+    case 0x9a: /* call */
+    case 0xc2: case 0xc3: /* retn */
+    case 0xc8: case 0xc9: /* enter / leave */
+    case 0xca: case 0xcb: /* retf */
+    case 0xcc: case 0xcd: case 0xce: case 0xcf: /* int3 / int / into / iret */
+    case 0xe0: case 0xe1: case 0xe2: case 0xe3: /* loop variants, jcxz */
+    case 0xe8: case 0xe9: case 0xea: case 0xeb: /* call / jmp */
+    case 0xff:
+        invalidate_pq = true;
+        break;
+    default: break;
+}
+```
+
+Every one of those is an instruction that can redirect `CS:IP` somewhere the queue didn't anticipate — exactly the set of opcodes a real prefetch unit would have no way to have already correctly fetched past. `invalidate_pq` gets checked at the top of the next iteration, and `pq_valid` drops to `false`, forcing the next `Fetch<T>()` down the miss path regardless of whether the new address happens to coincide with bytes still sitting in the buffer.
+
+This is selectable only in combination with `core=normal` — `cputype=386_prefetch` under `core=dynamic` is rejected outright (`E_Exit("prefetch queue emulation requires the normal core setting.")`) — because the whole point is to model a bus behavior the interpreter's straightforward one-read-per-byte `Fetchb()` glosses over. It has nothing to offer a core that doesn't fetch bytes one at a time to begin with.
+
+## 6.11 A Different Shape Entirely {#a-different-shape-entirely}
+
+`core_full.cpp` is the one file in this interlude that doesn't reuse @chapter(interpreter-core)'s `switch`-per-opcode dispatch at all. Instead of one `case` per opcode byte hand-written across `prefix_none.h`/`prefix_0f.h`/etc., every opcode is a row in a table, and the row is a plain 4-field struct. The table's size is the `256 × 4` of @section(interpreter-core/decoding-without-a-real-opcode-table)'s dispatch-space folding made explicit: 256 base opcode numbers, each replicated for the four combinations of (no `0F` / `0F` prefix) × (default operand size / `0x66` operand-size prefix) — the same dispatch-space folding @chapter(interpreter-core) described for the normal core's `switch`, just laid out as a flat array instead of a fall-through `switch`:
+
+```text
+  256 opcode numbers
+        × 4  (ordinary | 0F-prefix) × (default width | 0x66 width)
+   = 1024 rows
+```
+
+```cpp
+static OpCode OpCodeTable[1024] = {
+/* 0x00 - 0x07 */
+{L_MODRM,  t_ADDb, S_Eb, M_EbGb}, {L_MODRM,  t_ADDw, S_Ew, M_EwGw},
+{L_MODRM,  t_ADDb, S_Gb, M_GbEb}, {L_MODRM,  t_ADDw, S_Gw, M_GwEw},
+{L_REGbIb, t_ADDb, S_REGb, REGI_AL}, {L_REGwIw, t_ADDw, S_REGw, REGI_AX},
+/* ... */
+```
+
+Each row says how to *load* the operands, what *operation* to perform, how to *save* the result, and what addressing form it needs — and `CPU_Core_Full_Run()` executes an instruction by running through those phases as three separately `#include`d files, in order, all switching on fields of the same table row:
+
+```cpp
+inst.code = OpCodeTable[inst.entry];
+#include "core_full/load.h"   // switch (inst.code.load) { case L_MODRM: ... }
+#include "core_full/op.h"     // switch (inst.code.op)   { case t_ADDb: ... }
+#include "core_full/save.h"   // switch (inst.code.save) { case S_Eb: ... }
+```
+
+The names "load / operate / save" describe three `#include`d `switch` files dispatched on the table row's fields — an interpreter *organisation*, not a simulated three-stage hardware pipeline. The normal core's `switch`-per-opcode and `core_full`'s table-plus-includes are two shapes of the same idea; compare them directly:
+
+```text
+  normal core                 core_full
+  ────────────                ──────────
+  one big switch              one table row
+   per opcode byte             + three #included switches
+  hand-written case           (load / op / save)
+   per opcode
+```
+
+`load.h` fetches the ModRM byte and computes an effective address exactly the way @chapter(interpreter-core)'s ModRM/EA section described — `inst.rm = Fetchb(); ...; #include "ea_lookup.h"` — but as a generic "fetch whatever this row's `L_*` tag says to fetch," not a hand-written case per opcode. `op.h` performs the actual computation, and it's width-generic in a way @chapter(interpreter-core)'s per-width `ADDB`/`ADDW`/`ADDD` macros weren't — one `case t_ADDb: case t_ADDw: case t_ADDd:` handles all three widths through the same 32-bit scratch variables:
+
+```cpp
+case t_ADDb: case t_ADDw: case t_ADDd:
+    lf_var1d = inst_op1_d;
+    lf_var2d = inst_op2_d;
+    inst_op1_d = lf_resd = lf_var1d + lf_var2d;
+    lflags.type = inst.code.op;
+    break;
+```
+
+And there — `lflags.type = inst.code.op` — is the detail that ties this whole different-shaped core back to @chapter(interpreter-core) rather than setting it apart from it. `inst.code.op` is `t_ADDb` or `t_ADDw` or `t_ADDd` — the *exact same* lazy-flags type tags @section(interpreter-core/flags-computed-only-when-someone-asks) introduced, read by the *exact same* `get_ZF()`/`get_CF()`/etc. accessor functions. @chapter(interpreter-core) closed @section(interpreter-core/flags-computed-only-when-someone-asks) by noting that "any core claiming compatibility with this one has to get the same answers out of `get_ZF()`/`get_CF()`/etc. for the same instruction sequences, even if it never represents 'lazy flags' as an explicit concept internally." `core_full` is that claim made concrete: it reaches lazy flags through a completely different dispatch pipeline — table lookup, not switch-per-opcode; three included files, not one — and still produces exactly the deferred `lflags` state @chapter(interpreter-core) described, because it's calling into the identical flag-evaluation machinery underneath.
+
+`save.h` closes the loop, writing the operation's result back through the same `SaveMb`/`SaveMw`/`SaveMd` — @chapter(memory-model-and-address-translation)'s memory path, once again, unchanged:
+
+```cpp
+case S_Eb:
+    if (inst.rm < 0xc0) SaveMb(inst.rm_eaa, inst_op1_b);
+    else reg_8(inst.rm_eai) = inst_op1_b;
+    break;
+```
+
+Two more things distinguish `core_full` enough to be worth naming directly.
+
+**Page faults unwind through a C++ exception, with an explicit rollback.** Where @chapter(memory-model-and-address-translation)'s `PageHandler` machinery and @chapter(interrupts-exceptions-pic)'s `CPU_Exception()` are ordinary function calls and return codes, `core_full` wraps each instruction's load/op/save sequence in a `try`/`catch`, and a page fault mid-instruction is thrown as a `GuestPageFaultException`:
+
+```cpp
+Bitu old_flags = reg_flags;
+uint32_t old_esp = reg_esp;  // always restore stack pointer on page fault
+try {
+    #include "core_full/load.h"
+    #include "core_full/op.h"
+    #include "core_full/save.h"
+} catch (const GuestPageFaultException &pf) {
+    reg_flags = old_flags;  /* core_full/op.h may have modified flags */
+    reg_esp = old_esp;
+    throw;
+}
+```
+
+An instruction that faults partway through — after it's already touched `FLAGS` or pushed something onto the stack, say — gets those specific pieces of state rolled back before the fault propagates further, so a re-executed instruction (the normal remedy for a recoverable page fault) doesn't see partial effects from the attempt that failed. The rollback is deliberate and selective: it saves and restores only `old_flags` (`reg_flags`) and `old_esp` (`reg_esp`) — the two pieces of state an instruction can corrupt partway through — and lets everything else ride, rather than snapshotting the whole CPU. The normal interpreter has no need for this explicit rollback because it doesn't run load/op/save inside a single guarded region; one of its page faults instead unwinds all the way out to the scheduler's outer `try`/`catch` in `dosbox.cpp`, which clears the TLB, records the faulting linear address in `paging.cr2`, and delivers the `#PF` exception from there. @chapter(dynamic-recompilation) in fact opened by noting that `dynrec` simply refuses to run at all once paging is enabled, precisely because it has no equivalent answer to this problem.
+
+**It doesn't support the Trap Flag, and says so without hiding it:**
+
+```cpp
+if (GETFLAG(TF)) {
+    if (!tf_warn) {
+        tf_warn = true;
+        LOG(LOG_CPU,LOG_WARN)("Trap Flag single-stepping not supported by full core. Using normal core for TF emulation.");
+    }
+    return CPU_Core_Normal_Trap_Run();
+}
+```
+
+The comment above this check in the source names the actual reason: *"some demos (Second Reality, Future Crew) use the Trap Flag to self-decrypt on execute, which is why they normally crash when run under core=full."* Rather than attempt to reproduce single-step semantics inside its own load/op/save pipeline, `core_full` simply defers to @chapter(interpreter-core)'s interpreter — the normal core's dedicated Trap Run path (`CPU_Core_Normal_Trap_Run()`) already provides the single-step machinery, because real DOS-era copy protection and self-decrypting demo code depended on single-stepping working exactly as real silicon did it.
+
+## 6.12 What This Interlude Adds Up To {#what-this-interlude-adds-up-to}
+
+None of these four files changes anything Chapters 3 through 5 established — every one of them still runs inside the cycle budget, still participates in the same surrounding scheduling machinery, and (with the partial exception of timing, which is the entire point of @section(interpreter-core/the-bus-has-opinions-too)) still has to answer flag queries the same way the plain interpreter does. Where they actually touch guest memory, they ultimately use the same memory-access layer @chapter(memory-model-and-address-translation) built; what differs between these cores is how much machinery sits in front of that access — prefetch buffering, or a table-driven load stage — not the memory model underneath. What they show, each in a different register, is how many independent axes "be a correct x86 core" actually has: which architecture's checks apply at all (@section(interpreter-core/two-architectures-one-body)), how quickly bytes actually become available to decode (@section(interpreter-core/the-bus-has-opinions-too)), and how the load/execute/writeback pipeline itself is shaped internally (@section(interpreter-core/a-different-shape-entirely)). DOSBox-X doesn't pick one answer to all three questions and force every core through it — it lets each file answer the ones that matter to its purpose and inherit the rest, unchanged, from the same memory model and the same lazy-flags contract every core in this book ultimately has to honor.
+
+Despite their differences, every core this interlude has covered still implements the same guest-level fetch/decode/execute semantics as @chapter(interpreter-core)'s own `CPU_Core_Normal_Run()` — they decode an instruction anew each time it runs, even where the internal sequencing differs. Some specialize for older processors, some model instruction fetching more faithfully, and `core_full` reorganizes execution internally into three separately-included phases — but they all remain interpreters in that specific sense.
+
+@chapter(dynamic-recompilation) is about to introduce a fourth axis — *when* decoding happens relative to execution — and, in passing, a fifth core (`core_dyn_x86`) that answers it differently than `dynrec` does. It's worth carrying this interlude's central observation forward into that chapter: variety in implementation was never the exception in this codebase. `CPU_Core_Normal_Run()` was simply the version of the story simple enough to tell first.
+
+One last point to carry forward as well: throughout this chapter, "the interpreter runs for `CPU_Cycles` iterations" has been a statement about *how much* execution the scheduler permits, never about *how long* it takes in physical time. `CPU_Cycles` is a budget the main loop hands down; it governs the amount of emulated work, and the dynamic recompiler will later fill that same budget with host code instead of decoded guest instructions. The interpreter's clock-free loop — counting instructions and address-translation steps, not nanoseconds — is a design choice that keeps the core decoupled from wall-clock timing, and that decoupling is exactly what lets every core in this chapter share one scheduler contract.
+
+---
+
+*Next: @chapter(dynamic-recompilation) — Dynamic Recompilation, where we see what it takes to replace this chapter's per-instruction switch dispatch with compiled host code, while still producing bit-for-bit the same results — lazy flags included.*

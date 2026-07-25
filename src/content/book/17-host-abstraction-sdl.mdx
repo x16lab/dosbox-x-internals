@@ -1,0 +1,283 @@
+---
+title: "Host Abstraction via SDL"
+description: "The platform boundary — video/audio backend abstraction and input handling — covered concretely."
+order: 17
+chapterSlug: "host-abstraction-sdl"
+part: "host-integration"
+---
+# Chapter 17 — Host Abstraction via SDL {#chapter-17-host-abstraction-via-sdl}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 17.1 Backend and Frontend: What the Split Actually Means Here {#backend-and-frontend-what-the-split-actually-means-here}
+
+Every subsystem covered in Parts I through IV of this book is host-platform-agnostic — the CPU core, the memory model, the device modules, the configuration system, none of it cares whether it's running on Linux, Windows, or macOS. That platform-specific boundary is drawn deliberately at one layer: the frontend.
+
+It's worth being precise about what "backend" and "frontend" mean in this specific codebase, because the terms get used loosely elsewhere and DOSBox-X's own boundary doesn't fall exactly where you might guess. The **backend**, in this book's usage, is everything covered so far — the CPU cores, the memory model, the device modules, the DOS kernel, all of it. It's called a backend not because it's hidden or secondary, but because none of it knows or cares how its output eventually reaches a human being. VGA emulation produces a grid of pixel values; it has no concept of a window, a display driver, or a GPU. The sound subsystem produces a buffer of audio samples; it has no concept of a speaker or an audio API. The **frontend** is the layer whose entire job is closing that gap — taking backend output that's correct but inert and actually putting it in front of a person, and taking raw host input and translating it into the form the backend's emulated devices expect.
+
+That split is worth dwelling on because it's the same modularity principle @chapter(dosbox-x-architecture) introduced, just drawn at the widest possible scope. Where @chapter(dosbox-x-architecture) showed modules avoiding hard dependencies on *each other's* internals — the CPU core not needing to know VGA exists, VGA not needing to know which CPU core is running — this chapter is about the entire backend not needing to know anything about the *host machine* it happens to be running on. A `PageHandler` for the VGA framebuffer doesn't check what operating system it's running under before deciding how to update; the frontend is where that question finally gets asked, and it gets asked exactly once, in one place, rather than scattered through every device module that happens to produce visible or audible output.
+
+In practice, this boundary is anchored by `src/gui/sdlmain.cpp` — the same file, as @chapter(main-loop-and-event-scheduler) covers, that happens to contain `main()` — but it isn't confined to that one file the way a first glance might suggest. `sdlmain.cpp` owns the window, the main event loop, and the top-level dispatch logic, but the actual work of presenting a finished frame is delegated to a dedicated directory, `src/output/`, with one source file per presentation strategy: `output_surface.cpp`, `output_opengl.cpp`, `output_direct3d.cpp`, `output_direct3d11.cpp`, `output_ttf.cpp`, `output_gamelink.cpp`, `output_metal.mm`, plus shared scaling helpers in `output_tools.cpp`. That's a genuinely pleasing detail once you notice it: the same "one file per concern, registered into a shared dispatch point" pattern @chapter(dosbox-x-architecture) introduced for emulated *hardware* — one file per chip — shows up again here, applied to presentation backends instead of chips. It's also a small correction worth making explicitly if you've skimmed this chapter's topic before reading it closely: the frontend isn't "the SDL file." It's a small cluster of files, with `sdlmain.cpp` as the coordinator and `src/output/` doing the actual per-backend work.
+
+Finally: the boundary isn't perfectly clean even with that correction in mind. `src/gui/render.cpp`, which handles scaling and pixel-format conversion for VGA's output, sits in `src/gui/` alongside `sdlmain.cpp` even though its job is closer to "finish preparing backend output" than "talk to the host." Real codebases rarely draw architectural boundaries as cleanly as a diagram suggests, and this is a small, harmless example of that — the *conceptual* backend/frontend split still holds even where the *directory* layout doesn't reinforce it perfectly everywhere.
+
+One more scoping note before going further: SDL in DOSBox-X also mediates CD-ROM device access (`SDL_CDROMInit`/`SDL_CDROMQuit`), since a real or virtual CD drive is exactly the kind of host resource a frontend has to broker the same way it brokers a window or a sound card. This chapter's scope is video, input, and audio — CD-ROM access is covered instead alongside the storage-emulation material in Part IV, where it belongs conceptually even though the plumbing happens to run through SDL.
+
+## 17.2 Getting a Window On Screen: Init, Lifecycle, and DOSBox-X's Own SDL Patches {#getting-a-window-on-screen-init-lifecycle-and-dosbox-x-s-own-sdl-patches}
+
+Before any of the presentation or input machinery in the rest of this chapter can run, SDL itself has to be brought up — and DOSBox-X's own initialization sequence has a wrinkle worth knowing about before it trips you up while reading the source. Startup calls `SDL_Init()` not once but twice, for different purposes:
+
+```cpp
+if ( !sdl.inited && SDL_Init(SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE) < 0 ) textonly = true;
+...
+if (SDL_Init(SDL_INIT_AUDIO|SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_NOPARACHUTE) >= 0)
+```
+
+The first call is a minimal, video-only probe — if it fails, DOSBox-X falls back to a text-only mode rather than crashing outright, checking early whether a display is available at all before committing to anything more elaborate. The second, later call brings up the full set of subsystems the emulator actually needs: video, audio, and SDL's timer facility. `SDL_INIT_NOPARACHUTE` appears in both, and it's worth knowing what it does: by default, SDL installs its own signal handlers to catch crashes and attempt a clean shutdown; `NOPARACHUTE` disables that, letting crashes propagate to the OS (and, during development, to an actual debugger) instead of being intercepted and potentially obscured by SDL's own handler. That's a small detail, but it tells you something about the project's priorities — DOSBox-X would rather a crash be fully visible and debuggable than softened by a library-level safety net.
+
+More consequential is something the `extern "C"` declarations scattered through `sdlmain.cpp` reveal, and it's a genuine surprise if you're expecting DOSBox-X to be a straightforward consumer of an unmodified, stock SDL library:
+
+```cpp
+extern "C" void SDL_DOSBox_X_Hack_Set_Toggle_Key_WM_USER_Hack(unsigned char x);
+...
+extern "C" void SDL_hax_SetFSWindowPosition(int x,int y,int w,int h);
+```
+
+Function names containing "Hack" and "hax," declared with the `SDL_` prefix as if they were part of the library itself, are not something a project normally gets to just call — they exist because DOSBox-X, in at least some build configurations, carries and links against its own **patched fork of SDL**, not an unmodified copy from upstream. This is the same kind of literalism this book has tracked since @chapter(what-is-dosbox-x)'s A20 gate and @chapter(interrupts-exceptions-pic)'s IRQ2-to-IRQ9 remap, just showing up one layer removed: where those earlier examples were DOSBox-X faithfully reproducing a real hardware quirk, this one is DOSBox-X reaching into its own dependency and adding capability that upstream SDL was never going to expose on its own — window positioning behavior and a low-level key-toggle hook that full-screen and window-management code apparently needed and couldn't get any other way. Practically, this means that reading `sdlmain.cpp` in isolation can be misleading: some of what looks like an ordinary SDL API call is calling into code that only exists in DOSBox-X's own vendored SDL tree, and won't be found in SDL's public documentation or a stock SDL installation.
+
+The window's visible title bar is a smaller, more ordinary piece of this lifecycle, worth naming since it already appeared unexplained in a code excerpt earlier — the pause-loop snippet in @section(host-abstraction-sdl/input-keyboard-mouse-and-joystick-three-different-shapes) that called `GFX_SetTitle(-1,-1,-1,false)`. `GFX_SetTitle()` (`src/gui/sdlmain.cpp`) builds the title bar string — reflecting the current cycle count, pause state, and other running status — from the `[sdl]` `titlebar` configuration property, and is called from scattered points throughout the frontend (including, as already seen, from inside the modal pause loop) any time something worth reflecting in the title changes.
+
+## 17.3 SDL1 and SDL2: Two Frontend Generations, One Codebase {#sdl1-and-sdl2-two-frontend-generations-one-codebase}
+
+DOSBox-X doesn't target only one version of SDL — it supports both SDL 1.2 and SDL 2, selected at compile time via a preprocessor macro, `C_SDL2`. This isn't a historical leftover quietly waiting to be deleted; both paths are actively maintained, and `sdlmain.cpp` is threaded with conditional compilation blocks distinguishing the two throughout:
+
+```cpp
+#if defined(C_SDL2)
+    // SDL2-specific window/renderer setup
+#else
+    // SDL1-specific equivalent
+#endif
+```
+
+The reason both still exist comes down to a real tradeoff rather than inertia. SDL2 is the more capable and more actively developed library — better multi-monitor support, a proper GPU-accelerated renderer abstraction, more complete input handling — and is what DOSBox-X builds against by default. SDL 1.2, though largely superseded, remains relevant for platform configurations where SDL2 support is thin, unavailable, or where DOSBox-X's own SDL1 code path has picked up DOSBox-X-specific patches over the years that haven't all been ported forward. You can see this asymmetry acknowledged directly in the source's own configuration help text — several settings are documented as available only on specific combinations:
+
+```cpp
+Pint->Set_help(
+    "Set the transparency of the DOSBox-X screen (both windowed and "
+    "full-screen modes, on SDL2 and Windows SDL1 builds).\n"
+    "The valid value is from 0 (no transparency, the default setting) "
+    "to 90 (high transparency).");
+```
+
+"SDL2 and Windows SDL1 builds" — not "SDL1 builds" unconditionally — is exactly the kind of asymmetry that falls out of maintaining two frontend generations side by side rather than cutting over cleanly to one. A feature can land solidly on SDL2 everywhere, land on SDL1 only where a particular host platform's window-transparency API made it tractable to implement, and simply not exist on the rest. This is a useful thing to internalize before reading frontend-related source: `#if defined(C_SDL2)` in a given function doesn't always mean "here's the modern equivalent of the code in the `#else` branch" — sometimes it means "this capability only exists on one side of the split at all." You'll meet the same asymmetry again in @section(host-abstraction-sdl/input-keyboard-mouse-and-joystick-three-different-shapes), in a different form.
+
+## 17.4 Presentation Backends: One File Per Backend {#presentation-backends-one-file-per-backend}
+
+Once SDL (either generation) owns the window, DOSBox-X still has to decide *how* to get VGA's rendered frame onto that window's surface, and it supports several different presentation strategies for doing so — declared as an enum right in the frontend's own header:
+
+```cpp
+enum SCREEN_TYPES {
+    SCREEN_SURFACE
+    ,SCREEN_OPENGL
+#if C_DIRECT3D
+    ,SCREEN_DIRECT3D
+#endif
+    ,SCREEN_TTF
+    ,SCREEN_GAMELINK
+#if C_DIRECT3D && defined(C_SDL2)
+    ,SCREEN_DIRECT3D11
+#endif
+#if defined(MACOSX) && defined(C_SDL2) && C_METAL
+    , SCREEN_METAL
+#endif
+};
+```
+
+`SCREEN_SURFACE` is the simplest — plain software-driven pixel blitting, no GPU involvement, the option most likely to work identically everywhere at the cost of scaling quality and performance headroom. `SCREEN_OPENGL` and the Direct3D variants hand pixel scaling and presentation off to the host GPU, letting DOSBox-X apply smoother or more elaborate scaling filters without burning host CPU time doing it in software. `SCREEN_TTF` is unusual enough to be worth calling out on its own: rather than presenting VGA's pixel output at all, it renders DOS text-mode output using host TrueType fonts directly — useful for text-heavy DOS applications where crisp, scalable text matters more than pixel-perfect period accuracy. This choice is exposed directly as a configuration property (the mechanism @section(dosbox-x-architecture/configuration-as-its-own-layer) covers, applied here):
+
+```cpp
+Pstring = sdl_sec->Add_string("output", Property::Changeable::Always, "default");
+Pstring->Set_help("What video system to use for output "
+    "(surface = software (SDL_Surface); openglnb = OpenGL nearest; "
+    "openglpp = OpenGL perfect; ttf = TrueType font output).");
+```
+
+— the familiar `[sdl]` `output=` setting in `dosbox-x.conf`. It's worth being clear about how this relates to the SDL1/SDL2 question from @section(host-abstraction-sdl/sdl1-and-sdl2-two-frontend-generations-one-codebase), since the two are easy to collapse into one axis of variation when they're genuinely two separate ones: SDL1-versus-SDL2 is a choice about which underlying host-abstraction *library* the frontend is built on; `SCREEN_SURFACE`-versus-`SCREEN_OPENGL`-versus-`SCREEN_TTF` is a choice about which *presentation strategy* that frontend uses once it's built, and in principle several of these presentation strategies are available under either SDL generation. One axis is a compile-time decision made once, when DOSBox-X itself is built; the other is a runtime configuration choice made per session, in `dosbox-x.conf`.
+
+Each `SCREEN_TYPES` value has a corresponding implementation file in `src/output/`, as @section(host-abstraction-sdl/backend-and-frontend-what-the-split-actually-means-here) mentioned — `SCREEN_SURFACE` maps to `output_surface.cpp`, `SCREEN_OPENGL` to `output_opengl.cpp`, and so on. @section(host-abstraction-sdl/a-full-frame-from-gfx-startupdate-to-the-screen) opens one of those files and walks through what actually happens inside.
+
+## 17.5 A Full Frame: From `GFX_StartUpdate` to the Screen {#a-full-frame-from-gfx-startupdate-to-the-screen}
+
+This is the concrete handoff that makes the backend/frontend boundary real rather than conceptual: the render subsystem calls `GFX_StartUpdate()` to request a pointer into a frontend-owned pixel buffer, writes a completed frame into it, and calls `GFX_EndUpdate()` to hand it back. Everything on the near side of that call pair — scaling, color conversion, deciding *which* pixels changed since the last frame — is backend work; everything on the far side is the frontend's alone.
+
+`GFX_StartUpdate()` (`src/gui/sdlmain.cpp`) is a short dispatch, keyed on the current `SCREEN_TYPES` value:
+
+```cpp
+bool GFX_StartUpdate(uint8_t* &pixels,Bitu &pitch)
+{
+    if (!sdl.active || sdl.updating)
+        return false;
+
+    switch (sdl.desktop.type)
+    {
+        case SCREEN_SURFACE:
+            return OUTPUT_SURFACE_StartUpdate(pixels, pitch);
+#if C_OPENGL
+        case SCREEN_OPENGL:
+            return OUTPUT_OPENGL_StartUpdate(pixels, pitch);
+#endif
+        // ...SCREEN_DIRECT3D, SCREEN_DIRECT3D11, SCREEN_GAMELINK, SCREEN_METAL follow the same pattern
+        default:
+            break;
+    }
+    return false;
+}
+```
+
+`sdl.updating` is a re-entrancy guard, checked before anything else happens: if a frame update is already in progress, a second one is refused outright rather than allowed to race the first. Following the call into the simplest backend, `OUTPUT_SURFACE_StartUpdate()` (`src/output/output_surface.cpp`), shows what "starting an update" actually means when there's no GPU involved at all:
+
+```cpp
+bool OUTPUT_SURFACE_StartUpdate(uint8_t* &pixels, Bitu &pitch)
+{
+    ...
+    if (sdl.blit.surface)
+    {
+        if (SDL_MUSTLOCK(sdl.blit.surface) && SDL_LockSurface(sdl.blit.surface))
+            return false;
+        pixels = (uint8_t *)sdl.blit.surface->pixels;
+        pitch = sdl.blit.surface->pitch;
+    }
+    else
+    {
+        if (SDL_MUSTLOCK(sdl.surface) && SDL_LockSurface(sdl.surface))
+            return false;
+        pixels = (uint8_t *)sdl.surface->pixels;
+        pixels += sdl.clip.y * sdl.surface->pitch;
+        pixels += sdl.clip.x * sdl.surface->format->BytesPerPixel;
+        pitch = sdl.surface->pitch;
+    }
+
+    GFX_SDL_Overscan();
+    sdl.updating = true;
+    return true;
+}
+```
+
+`SDL_LockSurface()` is the SDL-level guarantee that the pixel memory won't move or be touched by anything else while the backend writes into it — the software-rendering equivalent of the re-entrancy guard one level up. The function then hands back a raw pointer directly into that locked surface's pixel memory (offset by `sdl.clip.x`/`sdl.clip.y`, which account for any letterboxing around the actual DOS screen content) and a pitch — the number of bytes per row, which isn't always simply width × bytes-per-pixel, since a surface can be padded for alignment. From this point until `GFX_EndUpdate()` is called, the render subsystem writes directly into real, pinned host memory; there's no intermediate copy, no message-passing, nothing more elaborate than a raw pointer, exactly the "keep the common case cheap" instinct this book has met before in the memory TLB (@chapter(memory-model-and-address-translation)) and the lazy-flags scheme (@chapter(interpreter-core)).
+
+`GFX_EndUpdate()` closes the transaction, clearing `sdl.updating` and dispatching, again by `sdl.desktop.type`, to whichever backend-specific presentation step is needed — for the surface backend, unlocking the surface and blitting it to the window; for the GPU-backed backends, uploading the finished pixel buffer as a texture and issuing a draw call. The important thing to notice is what *doesn't* change across backends: the render subsystem that calls `GFX_StartUpdate`/`GFX_EndUpdate` never needs to know which of these actually happened. It asked for a pointer, wrote pixels into it, and handed it back — the same three steps regardless of whether the far side of that handoff is a locked software surface or a GPU texture upload.
+
+## 17.6 Input: Keyboard, Mouse, and Joystick — Three Different Shapes {#input-keyboard-mouse-and-joystick-three-different-shapes}
+
+Where video output funnels through one clean, well-factored handoff, input capture turns out to be less uniform — and it's worth showing that honestly rather than flattening three genuinely different mechanisms into one tidy bullet point.
+
+**Keyboard** input is the most direct of the three. `GFX_Events()` (`src/gui/sdlmain.cpp`) is the real SDL event pump — a `while (SDL_PollEvent(&event))` loop, the input-side counterpart to @chapter(main-loop-and-event-scheduler)'s device-scheduling loop, just driven by host events instead of guest hardware timing. A `SDL_KEYDOWN`/`SDL_KEYUP` event reaching that loop gets translated and handed to `KEYBOARD_AddKey()` (`src/hardware/keyboard.cpp`), which doesn't touch hardware state directly — it dispatches further, by machine type and configured scancode set:
+
+```cpp
+void KEYBOARD_AddKey(KBD_KEYS keytype,bool pressed) {
+    ...
+    if (IS_PC98_ARCH) {
+        KEYBOARD_PC98_AddKey(keytype,pressed);
+    }
+    else if (machine == MCH_PCJR) {
+        KEYBOARD_AddKeyPCjr(keytype,pressed);
+    }
+    else if (keyb.cb_xlat) {
+        KEYBOARD_AddKey1(keytype,pressed);
+    }
+    else {
+        switch (keyb.scanset) {
+            case 1: KEYBOARD_AddKey1(keytype,pressed); break;
+            case 2: KEYBOARD_AddKey2(keytype,pressed); break;
+            case 3: KEYBOARD_AddKey3(keytype,pressed); break;
+        }
+    }
+}
+```
+
+Follow any of those `KEYBOARD_AddKey1/2/3` functions far enough and they end in exactly the mechanism @chapter(interrupts-exceptions-pic) already covered: a call to `PIC_ActivateIRQ(1)`, raising the keyboard's hardware interrupt line so the guest's own keyboard interrupt handler picks up the translated scancode. Keyboard input, in other words, isn't a special case this chapter needs new machinery to explain — it's host key events being converted into the same IRQ-driven path any other hardware interrupt takes.
+
+There are, worth flagging honestly, *two* separate places in `sdlmain.cpp` handling `SDL_KEYDOWN`. One lives inside `GFX_Events()`, the main loop just described. The other lives inside `PauseDOSBoxLoop()` — a dedicated modal loop entered specifically when emulation is paused, polling events on its own while waiting only for Pause/Break, Escape, or Space to resume. That's not duplicated logic so much as two genuinely different event-loop *contexts* — one is "the emulator is running and needs input," the other is "the emulator is deliberately stopped and needs just enough input to un-stop itself" — and DOSBox-X keeps them as separate loops rather than threading a "but what if we're paused" conditional through the main path.
+
+**Mouse** input is more involved, because SDL's ordinary motion events only fire while the cursor is inside the window — which isn't good enough for the common case of an *unlocked* mouse cursor moving in and out of a windowed DOS session. `GFX_EventsMouseProcess()` handles the general case: given a raw position and computed relative movement, if the cursor has just left the tracked window region, it synthesizes a new `SDL_MOUSEMOTION` event by hand and pushes it back onto SDL's own event queue with `SDL_PushEvent()` — letting the ordinary event pump pick it up on its next pass rather than needing a separate delivery path. On Windows specifically, a further wrapper, `GFX_EventsMouseWin32()`, polls the cursor position directly through the Win32 API (`GetCursorPos`/`ScreenToClient`) to compute that same relative movement, because SDL alone doesn't reliably report motion once the cursor has actually left the window. The general entry point, `GFX_EventsMouse()`, only does anything on Windows today:
+
+```cpp
+void GFX_EventsMouse()
+{
+    if (sdl.desktop.fullscreen || sdl.mouse.locked)
+        return;
+#if WIN32
+    GFX_EventsMouseWin32();
+#else
+    // TODO
+#endif
+}
+```
+
+That bare `// TODO` is worth not glossing over — it's the same kind of honest incompleteness @section(host-abstraction-sdl/sdl1-and-sdl2-two-frontend-generations-one-codebase) already surfaced with the transparency setting's SDL1/SDL2 asymmetry. Not every host platform gets identical treatment for every input edge case, and the source says so plainly rather than pretending otherwise.
+
+**Joystick** input takes a third shape entirely, and lives in a third file: `src/gui/sdl_mapper.cpp`, not `sdlmain.cpp`. This is DOSBox-X's *mapper* subsystem — a configurable input-remapping layer that lets a physical joystick's axes and buttons be bound to whichever emulated function the user wants, rather than assuming a fixed one-to-one correspondence. Mapper code reads `SDL_JOYAXISMOTION`/button events through `SDL_JoystickGetAxis()` and similar SDL joystick APIs, and feeds the result to the emulated joystick device through its own small interface:
+
+```cpp
+JOYSTICK_Move_X(emustick,(float)(jaxis->value/32768.0));
+JOYSTICK_Move_Y(emustick,(float)(jaxis->value/32768.0));
+JOYSTICK_Button(emustick, but, state);
+```
+
+The existence of the mapper as a whole is a small preview of @chapter(dosbox-x-extensions) (extensions and platform-scope features go well beyond video output), but the piece worth remembering here is narrower: keyboard input is nearly direct (host event → translated scancode → IRQ), mouse input needs active workaround code to handle the cursor leaving the window, and joystick input goes through an entire configurable remapping layer before it ever reaches an emulated device. Three inputs, three genuinely different shapes — not because DOSBox-X's design is inconsistent, but because keyboards, mice, and joysticks present genuinely different problems to a frontend trying to abstract them.
+
+There's a fourth input path worth flagging even briefly, though it earns only a mention here rather than full treatment: IME (Input Method Editor) support, for composing East Asian text input — directly relevant to the PC-98 and Japanese DOS scope @chapter(dosbox-x-extensions) covers. What's notable for this chapter specifically is where the API comes from:
+
+```cpp
+SDL_SetIMValues(SDL_IM_ENABLE, 1, NULL);
+...
+if ((len = SDL_FlushIMString(NULL))) {
+    SDL_FlushIMString(buff);
+    ...
+```
+
+`SDL_FlushIMString` and the `SDL_IM_*` constants aren't stock SDL2 — SDL2 handles international text input through ordinary `SDL_TEXTINPUT` events, with no such function or constants in its public API. This is the same patched SDL fork @section(host-abstraction-sdl/getting-a-window-on-screen-init-lifecycle-and-dosbox-x-s-own-sdl-patches) already surfaced with the window-positioning hooks, showing up again for a completely different reason: DOSBox-X's own IME needs apparently outgrew what stock SDL could offer, the same way its window-management needs did. Full IME handling belongs with @chapter(dosbox-x-extensions)'s PC-98/Japanese DOS material, where the *why* has proper context; the point to take from it here is just that this is now the second distinct feature area where "SDL" in this codebase quietly means "DOSBox-X's own extended SDL," not the library you'd download from libsdl.org.
+
+## 17.7 Audio: A Pull-Based Handoff, and DOSBox-X's First Thread Boundary {#audio-a-pull-based-handoff-and-dosbox-x-s-first-thread-boundary}
+
+Audio output looks, at first glance, like it should mirror video output — some backend subsystem produces samples, the frontend hands them to the host. The actual mechanism is different in a way worth taking seriously, because it introduces a concept nothing earlier in this book has needed: **a second thread.**
+
+Audio lives in its own file, `src/hardware/mixer.cpp` — not `sdlmain.cpp`, and not `src/output/` either, which is itself worth noting as one more small wrinkle in the backend/frontend directory boundary this chapter keeps returning to. The mixer opens the host audio device directly:
+
+```cpp
+SDL_AudioSpec spec;
+SDL_AudioSpec obtained;
+...
+spec.callback = MIXER_CallBack;
+...
+} else if ((SDL2_AudioDevice = SDL_OpenAudioDevice(NULL, 0, &spec, &obtained,
+        SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE)) == 0) {
+```
+
+That `spec.callback = MIXER_CallBack` line is the crux of the difference. Video output is **push**-style: the backend decides when a frame is ready and calls `GFX_StartUpdate`/`GFX_EndUpdate` on its own schedule. Audio output is **pull**-style: SDL itself decides when it needs more samples — driven by the host audio hardware's own buffer-draining schedule, not by anything DOSBox-X's emulation loop controls — and calls `MIXER_CallBack()` to ask for them:
+
+```cpp
+static void SDLCALL MIXER_CallBack(void * userdata, Uint8 *stream, int len) {
+    ...
+}
+```
+
+SDL audio callbacks run on a dedicated audio thread that SDL itself manages, separate from the thread running `Normal_Loop` and every CPU core this book has covered. That's a genuinely new architectural fact for this book to introduce: everything through @chapter(timing-and-cycle-management) has been implicitly single-threaded, with the scheduler from @chapter(main-loop-and-event-scheduler) as the sole arbiter of what runs when. Audio breaks that assumption, and DOSBox-X's own source acknowledges it directly — `mixer.cpp` explicitly locks the audio device around any access to state the callback also touches:
+
+```cpp
+SDL_LockAudioDevice(SDL2_AudioDevice);
+SDL_LockAudio();
+...
+SDL_UnlockAudioDevice(SDL2_AudioDevice);
+SDL_UnlockAudio();
+```
+
+The `SDL_LockAudioDevice`/`SDL_LockAudio` pair (SDL2 and SDL1 forms respectively, following the same dual-generation pattern @section(host-abstraction-sdl/sdl1-and-sdl2-two-frontend-generations-one-codebase) already covered) exists for exactly one reason: without it, the main emulation thread writing new samples into the mixer's buffers and the audio thread reading them out via `MIXER_CallBack` could race each other, since both sides touch the same shared state from genuinely different threads. This is worth flagging plainly rather than working around: it's the first — and, in the chapters this book has covered so far, only — place a reader needs to think about concurrent access to shared state rather than the single, orderly cycle-budgeted execution stream Chapters 2 through 14 have consistently described. `MIXER_CallBack()`'s own job, once safely inside that lock, is to combine whatever per-device sample sources have queued output (PC speaker, Sound Blaster, and the other sound hardware covered in Part III) into the single interleaved stream the host audio API expects — the mixing algorithm itself belongs to the sound chapters that already covered those devices, not here; this chapter's concern stops at the boundary crossing itself.
+
+## 17.8 What Carries Forward {#what-carries-forward}
+
+Put next to the rest of this book, this chapter hasn't introduced a new philosophy so much as shown what happens when the philosophy meets a boundary it can't fully control. Every other chapter has been about DOSBox-X modeling something it gets to define the rules for — a chip's register behavior, a memory access, an interrupt's priority. The frontend is different: it has to meet SDL, the host OS, and the host's own audio and video drivers on *their* terms, and the result is less uniform than anything covered so far — two SDL generations instead of one, presentation strategies split across a whole directory of backend files, three genuinely different input mechanisms for three genuinely different devices, and, in audio's case, the book's first real thread boundary. None of that is a design flaw. It's what "host abstraction" actually costs once you take it seriously instead of hand-waving it: the messiness doesn't go away, it just gets contained to one clearly bounded layer, so that everything this book spent Parts I through IV explaining — the scheduler, the memory model, the CPU cores, the devices, the DOS kernel — never has to know any of this exists.
+
+---
+
+*Next: @chapter(dosbox-x-extensions) — DOSBox-X-Specific Extensions, where the platform-scope decisions @chapter(what-is-dosbox-x) said distinguished DOSBox-X from the project it forked from — PC-98 support, Windows 9x compatibility, and the mapper subsystem this chapter has already previewed — get the full treatment.*

@@ -1,0 +1,82 @@
+---
+interface Props {
+  title?: string;
+  caption?: string;
+}
+
+const { title, caption } = Astro.props;
+---
+
+<figure class="register-table">
+  {title && <figcaption>{title}</figcaption>}
+  <div class="table-wrap">
+    <table>
+      <slot />
+    </table>
+  </div>
+  {caption && <p class="table-caption">{caption}</p>}
+</figure>
+
+<style>
+  .register-table {
+    margin: calc(var(--baseline) * 1.5) 0;
+    border: var(--hairline);
+    background: var(--color-surface);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+
+  .register-table figcaption {
+    padding: 0.75rem var(--baseline);
+    border-bottom: var(--hairline);
+    color: var(--color-accent);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    padding: 0;
+  }
+
+  .register-table :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .register-table :global(th) {
+    padding: 0.6rem var(--baseline);
+    background: var(--color-soft);
+    color: var(--color-text);
+    font-weight: 600;
+    text-align: left;
+    border-bottom: 2px solid var(--color-line-strong);
+    white-space: nowrap;
+  }
+
+  .register-table :global(td) {
+    padding: 0.5rem var(--baseline);
+    color: var(--color-muted);
+    border-bottom: var(--hairline);
+    vertical-align: top;
+  }
+
+  .register-table :global(tr:last-child td) {
+    border-bottom: none;
+  }
+
+  .register-table :global(code) {
+    font-size: 0.85em;
+  }
+
+  .table-caption {
+    margin: 0;
+    padding: 0.6rem var(--baseline);
+    border-top: var(--hairline);
+    color: var(--color-muted);
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+</style>

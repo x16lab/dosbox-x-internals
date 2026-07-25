@@ -1,0 +1,124 @@
+<svg viewBox="0 0 900 660" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Outer frame -->
+    <rect x="30" y="30" width="840" height="590" rx="14" fill="none" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="450" y="66" text-anchor="middle" font-size="18" font-weight="700" fill="var(--fg-title)">THE ROLE OF WALL-CLOCK TIME</text>
+    <line x1="50" y1="86" x2="850" y2="86" stroke="var(--footer-line)" stroke-width="1"/>
+
+    <!-- Step 1 -->
+    <rect x="70" y="110" width="730" height="60" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="450" y="146" text-anchor="middle" font-size="13" fill="var(--indigo-label)">The emulator runs cycles, advancing guest time.</text>
+
+    <line x1="450" y1="170" x2="450" y2="190" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Step 2 -->
+    <rect x="70" y="200" width="730" height="60" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="450" y="236" text-anchor="middle" font-size="13" fill="var(--indigo-label)">After spending a millisecond's worth of cycles:</text>
+
+    <line x1="450" y1="260" x2="450" y2="280" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Step 3: decision -->
+    <rect x="70" y="290" width="730" height="70" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="450" y="332" text-anchor="middle" font-size="13" fill="var(--indigo-label)"><tspan font-family="Consolas, Menlo, monospace" fill="var(--indigo-code)">GetTicks()</tspan><tspan> → "How much real time did that take?"</tspan></text>
+
+    <!-- Branch: trunk, bus, two drops -->
+    <line x1="450" y1="360" x2="450" y2="380" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="245" y1="380" x2="615" y2="380" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="245" y1="380" x2="245" y2="410" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <line x1="615" y1="380" x2="615" y2="410" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- LESS THAN 1MS -->
+    <rect x="70" y="410" width="350" height="130" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="90" y="434" font-size="12" font-weight="700" fill="var(--green-label)">LESS than 1ms → this round finished early</text>
+    <text x="90" y="458" font-family="Consolas, Menlo, monospace" font-size="13" fill="var(--green-code)">wrap_delay(1) — SDL_Delay(1ms)</text>
+    <text x="90" y="482" font-size="11" fill="var(--green-note)">no new real time to account for yet;</text>
+    <text x="90" y="498" font-size="11" fill="var(--green-note)">sleep briefly rather than busy-spin,</text>
+    <text x="90" y="514" font-size="11" fill="var(--green-note)">then check GetTicks() again</text>
+
+    <!-- 1MS OR MORE -->
+    <rect x="440" y="410" width="350" height="130" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="460" y="434" font-size="12" font-weight="700" fill="var(--indigo-label)">1ms or MORE → record the measurement</text>
+    <text x="460" y="458" font-family="Consolas, Menlo, monospace" font-size="13" fill="var(--indigo-code)">ticksDone += ticksRemain</text>
+    <text x="460" y="482" font-size="11" fill="var(--indigo-note)">this is the ordinary, expected path —</text>
+    <text x="460" y="498" font-size="11" fill="var(--indigo-note)">only once ~250ms accumulates does §3.6's</text>
+    <text x="460" y="514" font-size="11" fill="var(--indigo-note)">ratio decide to RAISE or LOWER CPU_CycleMax</text>
+
+    <!-- Footer -->
+    <line x1="50" y1="560" x2="850" y2="560" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="450" y="586" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--footer-text)">Guest time is driven by cycles — wall-clock time only throttles the rate</text>
+</svg>

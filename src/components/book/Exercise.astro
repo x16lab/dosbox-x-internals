@@ -1,0 +1,86 @@
+---
+interface Props {
+  title?: string;
+  number?: string;
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+}
+
+const { title, number, difficulty = 'intermediate' } = Astro.props;
+
+const difficultyColors: Record<string, string> = {
+  beginner: 'var(--color-accent)',
+  intermediate: 'oklch(0.65 0.18 80)',
+  advanced: 'oklch(0.6 0.2 30)',
+};
+---
+
+<aside class="exercise" aria-label={title ? `Exercise: ${title}` : 'Exercise'}>
+  <div class="exercise-header">
+    <span class="exercise-badge">Exercise{number ? ` ${number}` : ''}</span>
+    <span class="exercise-difficulty" style={`--difficulty-color: ${difficultyColors[difficulty] || difficultyColors.intermediate}`}>
+      {difficulty}
+    </span>
+  </div>
+  {title && <strong class="exercise-title">{title}</strong>}
+  <div class="exercise-body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .exercise {
+    margin: calc(var(--baseline) * 1.5) 0;
+    border: 1px solid var(--color-accent);
+    background: var(--color-surface);
+  }
+
+  .exercise-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem var(--baseline);
+    border-bottom: 1px solid var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+
+  .exercise-badge {
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .exercise-difficulty {
+    color: var(--difficulty-color);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .exercise-title {
+    display: block;
+    padding: 0.75rem var(--baseline) 0;
+    font-size: 1.05rem;
+  }
+
+  .exercise-body {
+    padding: 0.75rem var(--baseline) var(--baseline);
+  }
+
+  .exercise-body :global(p) {
+    margin: 0 0 0.75rem;
+    color: var(--color-muted);
+    line-height: 1.7;
+  }
+
+  .exercise-body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .exercise-body :global(code) {
+    font-size: 0.85em;
+  }
+</style>

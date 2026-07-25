@@ -1,0 +1,109 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { withBase } from '../lib/url';
+import { SITE } from '../consts';
+
+const parts = [
+  {
+    title: 'Part I — Foundations',
+    chapters: [
+      { num: 0, slug: 'introduction', title: 'Introduction', description: 'Overview of DOSBox-X and PC emulation.' },
+      { num: 1, slug: 'what-is-dosbox-x', title: 'What Is DOSBox-X and Why Does It Exist?', description: "The historical case: the IBM PC's ad-hoc collection of chips (8088, 8259, 8253, 8237, VGA), MS-DOS's near-total lack of hardware abstraction, and why that combination means DOS software's real \"API\" is the hardware's register map rather than any documented interface. Covers the clone-market dynamics, Windows XP ending native DOS support, DOSBox's 2002 founding, and DOSBox-X's 2011 fork." },
+      { num: 2, slug: 'dosbox-x-architecture', title: 'DOSBox-X Architecture', description: 'A map of the emulator as a system: hardware modeled as independent modules (CPU, memory, PIC/PIT/DMA, VGA, sound, DOS kernel, frontend), and the five mechanisms those modules use to communicate — direct function calls, memory-mapped handler dispatch, I/O port trapping, interrupts, and callbacks.' },
+      { num: 3, slug: 'time-in-dosbox-x', title: 'Time in DOSBox-X', description: 'Three clocks, three units: host wall-clock milliseconds, simulated PIC_Ticks, and raw CPU cycles. Traces GetTicks(), PIC_Ticks, and CPU_CycleMax/CPU_Cycles/CPU_CycleLeft through the source to show how DOSBox-X converts between them continuously, and reconciles simulated time against the real clock via increaseticks().'},
+      { num: 4, slug: 'main-loop-and-event-scheduler', title: 'The Main Loop and Event Scheduler', description: 'Traces main() through DOSBOX_RunMachine() and Normal_Loop() to PIC_RunQueue(). DOSBox-X is a discrete-event simulator with a CPU attached — the CPU only ever runs as many cycles as fit before the next scheduled event, computed from a fractional-tick event queue that every device shares.' },
+      { num: 5, slug: 'memory-model-and-address-translation', title: 'Memory Model and Address Translation', description: 'Segmentation, the linear/physical distinction once paging enters the picture, the TLB as a flat million-entry array, and PageHandler as the mechanism letting any address range quietly not be RAM. Covers the A20 gate and EMS/XMS.' },
+    ],
+  },
+  {
+    title: 'Part II — The CPU',
+    chapters: [
+      { num: 6, slug: 'interpreter-core', title: 'The Interpreter Core', description: "CPU_Core_Normal_Run()'s fetch/decode/execute loop. Covers the switch-as-jump-table opcode dispatch, the ModRM/effective-address table, and lazy flags — deferring flag-bit computation until something like a conditional jump actually asks." },
+      { num: 7, slug: 'dynamic-recompilation', title: 'Dynamic Recompilation', description: 'The portable dynrec core: translating guest instruction blocks into host machine code via swappable backends (risc_x64.h, risc_armv8le.h, etc.). Covers the cycle-budget check compiled into generated code, block linking, and self-modifying-code detection via PageHandler invalidation.' },
+      { num: 8, slug: 'interrupts-exceptions-pic', title: 'Interrupts, Exceptions, and the PIC', description: 'Hardware IRQs, software INT instructions, and CPU exceptions — three triggers converging on CPU_Interrupt(). Covers the master/slave 8259 cascade, IRQ2→IRQ9 remap, and a full device-to-handler trace from PIT tick to guest handler and EOI.' },
+      { num: 9, slug: 'protected-mode', title: 'Protected Mode: Descriptors, Task Switching, and DPMI', description: 'The protected-mode machinery Chapter 7 left unopened: the GDT/LDT and the Descriptor class that decodes them, full gate dispatch inside CPU_Interrupt() (call/interrupt/trap/task gates, CPL/DPL privilege checks), hardware task switching via the TSS (including the CR3 reload that makes it a real address-space switch), the I/O permission bitmap, and why DOSBox-X has no native DPMI implementation at all — CWSDPMI runs as an ordinary guest program against everything this chapter builds.'},
+    ],
+  },
+  {
+    title: 'Part III — Devices',
+    chapters: [
+      { num: 10, slug: 'vga-emulation', title: 'VGA/SVGA Emulation', description: 'Register-level CRTC/sequencer/graphics-controller/attribute-controller emulation, how INT 10h mode-sets map onto those registers, and retrace timing — where the PageHandler-backed framebuffer mechanism finally gets a concrete owner.' },
+      { num: 11, slug: 'dma-and-pit', title: 'DMA and the PIT', description: 'The 8237 DMA controller and the PIT channels beyond the system timer — specifically channel 2, which drives the PC speaker.' },
+      { num: 12, slug: 'sound', title: 'Sound', description: 'Sound Blaster DSP command emulation, Gravis UltraSound wavetable synthesis, and MIDI passthrough vs. software synthesis.' },
+      { num: 13, slug: 'serial-parallel-peripherals', title: 'Serial, Parallel, and Peripheral I/O', description: 'UART emulation, modem/null-modem support, printer emulation, joystick and mouse.' },
+    ],
+  },
+  {
+    title: 'Part IV — Software Layers',
+    chapters: [
+      { num: 14, slug: 'the-bios-layer', title: 'The BIOS Layer', description: "What DOSBox-X's BIOS actually implements versus stubs, and the INT 10h/13h/16h/1Ah service tables that sit directly on top of the device chapters." },
+      { num: 15, slug: 'the-dos-kernel', title: 'The DOS Kernel', description: 'File system emulation (host-directory mounting), PSP/MCB chain and process emulation, and INT 21h dispatch — the single most useful chapter for anyone doing DOS-era reverse engineering.' },
+      { num: 16, slug: 'timing-and-cycle-management', title: 'Timing and Cycle Management', description: 'The cycles= setting and auto-adjustment heuristics — why cycle-exact behavior is fundamentally hard on a variable-speed host, and what "auto" mode actually does.' },
+    ],
+  },
+{
+      title: 'Part V — Host Integration and Extensions',
+      chapters: [
+        { num: 17, slug: 'host-abstraction-sdl', title: 'Host Abstraction via SDL', description: 'The platform boundary — video/audio backend abstraction and input handling — covered concretely.' },
+        { num: 18, slug: 'dosbox-x-extensions', title: 'DOSBox-X-Specific Extensions', description: 'NEC PC-98 support as a case study, Windows 9x compatibility, and Japanese DOS/code-page handling.' },
+        { num: 19, slug: 'debugger-logging-static-analysis', title: 'Debugging and Instrumentation', description: "DOSBox-X's integrated debugger, logging subsystems, and how to cross-reference emulator trace output against static analysis." },
+      ],
+    },
+  {
+    title: 'Appendices',
+    chapters: [
+      { num: 20, slug: 'appendix-a-glossary', title: 'A — Glossary', description: 'A reference for PC- and DOS-era terminology used throughout the book, built incrementally as each chapter introduces new vocabulary.' },
+      { num: 21, slug: 'appendix-b-comparative-table', title: 'B — DOSBox-X in Context', description: 'A comparison of DOSBox-X against related PC emulation projects across dimensions of hardware fidelity, execution speed, platform scope, and BIOS/OS strategy.' },
+      { num: 22, slug: 'appendix-c-source-map', title: 'C — Annotated Source Map', description: 'A cross-reference from source file to subsystem to the chapter(s) that explain it, built incrementally alongside the chapters.' },
+      { num: 23, slug: 'appendix-d-configuration-reference', title: 'D — Configuration Reference', description: 'A living reference to dosbox-x.conf settings mentioned throughout this book, organized by section and key.' },
+    ],
+  },
+];
+---
+
+<BaseLayout
+  title={SITE.title}
+  description={SITE.description}
+>
+  <section class="hero section" style="padding-block: clamp(1rem, 2vw, 1.75rem);">
+    <p class="eyebrow">Technical book</p>
+    <h1>Inside DOSBox-X</h1>
+    <p class="lead" style="max-width: 50ch;">
+      Understanding the IBM PC Emulation: An <span class="warning-badge">unedited and unverified</span> exploration of how DOSBox-X emulates the IBM PC Architecture, from CPU and memory to graphics, sound, and dynamic recompilation.
+    </p>
+    <style>
+      .warning-badge {
+        display: inline-block;
+        color: red;
+        font-size: 1.15em;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 0.02em;
+      }
+    </style>
+    <div class="action-row" aria-label="Primary links">
+      <a class="button" href={withBase('/read/')}>Start Reading</a>
+    </div>
+  </section>
+
+  <section class="section" aria-label="Table of contents">
+    <p class="eyebrow">Contents</p>
+    {
+      parts.map((part) => (
+        <div style="margin-bottom: 2.5rem;">
+          <h2 style="font-size: 1.25rem; margin-bottom: 0.75rem;">{part.title}</h2>
+          <ol style="list-style: none; padding: 0; margin: 0;">
+            {part.chapters.map((ch) => (
+              <li style="margin-bottom: 1.25rem; padding-left: 1rem; border-left: 2px solid var(--color-border, #e0e0e0);">
+                <a href={withBase(`/read/#ch-${ch.slug}`)} style="font-weight: 600; text-decoration: none; color: var(--color-accent);">
+                  {ch.num}. {ch.title}
+                </a>
+                <p style="margin: 0.25rem 0 0 0; font-size: 0.88rem; opacity: 0.75; line-height: 1.5;">{ch.description}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))
+    }
+  </section>
+</BaseLayout>

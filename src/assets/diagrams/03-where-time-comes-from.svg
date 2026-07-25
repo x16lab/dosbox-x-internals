@@ -1,0 +1,111 @@
+<svg viewBox="0 0 800 780" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Where "time" comes from</title>
+<desc>Physical chain from a quartz crystal's vibration to CPU cycles: crystal, oscillator, clock signal, CPU logic, instruction execution. A second is not a hardware concept — it is a convention applied after the fact to a count of cycles.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-label: #9a3412;
+    --orange-footnote: #9a3412;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-label: #fdba74;
+    --orange-footnote: #fdba74;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+}
+
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+.code { font-family: Consolas, Menlo, monospace; }
+</style>
+</defs>
+
+<text x="370" y="40" text-anchor="middle" fill="var(--fg-title)" font-size="20" font-weight="700">Where "time" comes from</text>
+<text x="370" y="64" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13">The physical origin of every cycle count DOSBox-X later calls guest time.</text>
+
+<!-- Node 1: Quartz crystal -->
+<rect x="140" y="100" width="460" height="70" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="370" y="142" text-anchor="middle" fill="var(--indigo-label)" font-size="15" font-weight="700">Quartz crystal</text>
+
+<!-- Arrow 1 -->
+<line x1="370" y1="170" x2="370" y2="202" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="190" text-anchor="start" fill="var(--arrow)" font-size="12" font-style="italic">vibrates at a fixed physical rate</text>
+
+<!-- Node 2: Oscillator circuit -->
+<rect x="140" y="202" width="460" height="70" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="370" y="244" text-anchor="middle" fill="var(--indigo-label)" font-size="15" font-weight="700">Oscillator circuit</text>
+
+<!-- Arrow 2 -->
+<line x1="370" y1="272" x2="370" y2="304" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="292" text-anchor="start" fill="var(--arrow)" font-size="12" font-style="italic">converts vibration into a square wave</text>
+
+<!-- Node 3: Clock signal -->
+<rect x="140" y="304" width="460" height="110" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="164" y="332" fill="var(--indigo-label)" font-size="15" font-weight="700">Clock signal</text>
+<text x="164" y="354" class="code" fill="var(--indigo-code)" font-size="13">~4.77 MHz (8088 PC)</text>
+<path d="M340,364 H360 V344 H380 V364 H400 V344 H420 V364 H440 V344 H460 V364 H480"
+      fill="none" stroke="var(--indigo-border)" stroke-width="2"/>
+
+<!-- Arrow 3 -->
+<line x1="370" y1="414" x2="370" y2="446" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="434" text-anchor="start" fill="var(--arrow)" font-size="12" font-style="italic">each rising edge = one cycle</text>
+
+<!-- Node 4: CPU logic -->
+<rect x="140" y="446" width="460" height="70" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="370" y="488" text-anchor="middle" fill="var(--indigo-label)" font-size="15" font-weight="700">CPU logic advances one step per cycle</text>
+
+<!-- Arrow 4 (unlabeled) -->
+<line x1="370" y1="516" x2="370" y2="548" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Node 5: Instructions execute (green) -->
+<rect x="140" y="548" width="460" height="90" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+<text x="370" y="582" text-anchor="middle" fill="var(--green-label)" font-size="15" font-weight="700">Instructions take a fixed number</text>
+<text x="370" y="604" text-anchor="middle" fill="var(--green-label)" font-size="15" font-weight="700">of cycles to execute</text>
+
+<!-- Footer -->
+<line x1="140" y1="668" x2="600" y2="668" stroke="var(--footer-line)"/>
+<text x="370" y="694" text-anchor="middle" fill="var(--orange-label)" font-size="14" font-weight="700">"One second" is not a hardware concept.</text>
+<text x="370" y="716" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">It's a human convention applied after the fact to roughly 4.77 million of these pulses.</text>
+
+</svg>

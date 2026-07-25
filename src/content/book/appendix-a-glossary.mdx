@@ -1,0 +1,170 @@
+---
+title: "Appendix A — Glossary"
+description: "A reference for PC- and DOS-era terminology used throughout the book, built incrementally as each chapter introduces new vocabulary."
+order: 18
+chapterSlug: "appendix-a-glossary"
+part: "appendices"
+---
+# Appendix A — Glossary {#appendix-a-glossary}
+
+*A reference for PC- and DOS-era terminology used throughout this book, aimed at readers whose systems background is mostly modern (web, cloud, mobile) rather than DOS-era or embedded. Like Appendix D, this glossary is built incrementally — every term defined here has actually been used in the chapters written so far, and it will grow as later chapters introduce new vocabulary. Where a term gets a full narrative explanation somewhere in the book, the entry points there; where it doesn't, the entry here is the complete definition.*
+
+---
+
+**8.3 filename** — The DOS filename convention: up to eight characters, a dot, and a three-character extension, all uppercase and case-insensitive, with a fixed set of legal characters; the format every FAT directory entry stores and the format DOS programs see, even when the underlying host file is longer, differently cased, or contains illegal characters. → @section(the-dos-kernel/the-directory-cache-manufacturing-8-3-names-on-the-fly).
+
+**A20 gate** — A hardware mechanism (originally implemented via a spare pin on the AT keyboard controller) that controls whether address line 20 is allowed to carry its true value or is forced low, preserving 8086-era address wraparound behavior for software that depended on it. → @section(memory-model-and-address-translation/the-a20-gate-a-historical-wart-modeled-faithfully).
+
+**Attribute Controller** — One of VGA's four register blocks, governing palette mapping, blink, and overscan; unusually uses a single I/O port (`0x3C0`) for both index and data, toggled by an internal flip-flop. → @section(vga-emulation/from-port-writes-to-dosbox-x-handlers).
+
+**Backend / frontend (in this book's usage)** — The backend is everything that produces emulation output without knowing how it reaches a human (CPU, memory, devices, DOS kernel); the frontend is the host-platform-specific layer that actually presents that output and captures input. → @section(host-abstraction-sdl/backend-and-frontend-what-the-split-actually-means-here).
+
+**Baud rate** — The number of signal transitions (bits, in the RS-232 context) a serial link transmits per second; in DOSBox-X the value a UART's divisor-latch register encodes, converted into a scheduled byte-transmission delay (`bytetime`) through the same event queue that paces every other timed device. → @section(serial-parallel-peripherals/byte-time-turning-a-baud-rate-into-a-delay-the-scheduler-understands).
+
+**BIOS (Basic Input/Output System)** — The firmware layer providing the low-level services DOS and DOS programs call through software interrupts (INT 10h video, INT 13h disk, INT 16h keyboard, INT 1Ah time); in DOSBox-X it's usually native C++ functions wired into the interrupt vector table via callback stubs rather than an executed ROM image. → @section(the-bios-layer/a-rom-made-of-escape-hatches).
+
+**BIOS data area (BDA)** — A region of low conventional memory (`0x400`–`0x4FF`) where the BIOS keeps its own bookkeeping — timer ticks (the famous `0x46C` counter), keyboard state, equipment flags — readable and writable by DOS software that wants to see the same numbers the BIOS does. → @section(the-bios-layer/int-1ah-one-vector-three-unrelated-jobs).
+
+**Breakpoint (debugger)** — A debugger facility that halts execution when a specified condition is met; DOSBox-X's physical breakpoints patch a real `0xCC` (`INT3`) byte into guest memory at the watched address, saving the original byte and restoring it on deactivation. → @section(debugger-logging-static-analysis/breakpoints-patching-the-guest-not-the-host).
+
+**Cache block** — In a dynamic recompiler, a translated unit of guest instructions, compiled to host machine code once and reused on subsequent execution. → @section(dynamic-recompilation/translation-units-cache-blocks).
+
+**Callback (DOSBox-X sense)** — A mechanism bridging emulated guest execution and native C++ code, used to implement BIOS/DOS services invoked via software interrupts. → @section(dosbox-x-architecture/how-modules-talk-to-each-other); @section(main-loop-and-event-scheduler/normal-loop).
+
+**Cascade (PIC)** — The wiring arrangement by which a second ("slave") 8259 interrupt controller's single output feeds into one input line of the first ("master") 8259, extending the number of usable interrupt lines from 8 to 15. → @section(interrupts-exceptions-pic/life-of-a-timer-tick).
+
+**Code page** — A character-encoding scheme mapping byte values to glyphs; DOS-era examples include CP437 and CP850 for Western European use and double-byte schemes such as Shift-JIS for East Asian text. → @section(dosbox-x-extensions/japanese-dos-and-code-pages-three-answers-to-the-same-problem).
+
+**COM file / EXE file** — The two DOS executable formats: a COM file is a flat binary loaded at offset `0x100` of its own segment, with no header and no relocation; an EXE file carries an MZ header plus a relocation table that the loader applies before computing the entry `CS:IP`. → @section(the-dos-kernel/dos-execute-from-an-mz-signature-to-a-running-cs-ip).
+
+**Conventional memory** — The first 640 KB of a DOS system's address space, directly usable by DOS programs without any bank-switching or extended-addressing tricks.
+
+**CRTC (Cathode Ray Tube Controller)** — The VGA register block governing raster timing: scanline counts, blanking, retrace, and cursor position. → @section(vga-emulation/the-common-pattern-index-data-register-pairs).
+
+**Cycle budget** — The number of guest instructions DOSBox-X commits to executing per emulated millisecond (`CPU_CycleMax`), the unit behind the `cycles=` setting and the quantity the scheduler uses to decide how much CPU work fits before the next scheduled hardware event. → @section(timing-and-cycle-management/what-cpu-cyclemax-actually-measures).
+
+**DAC (Digital-to-Analog Converter)** — The component that reconstructs an analog voltage from a stream of digital samples so a speaker can reproduce recorded sound; the Sound Blaster's DSP exists largely to move sample bytes to its DAC at a controlled rate. → @section(sound/understanding-dos-audio-playback-synthesis-and-midi).
+
+**Discrete-event simulation** — A simulation strategy where state only changes at specific, scheduled points in time ("events") rather than being continuously recomputed; the organizing principle behind DOSBox-X's scheduler. → @section(main-loop-and-event-scheduler/the-execution-problem)–@section(main-loop-and-event-scheduler/pic-runqueue).
+
+**Disk Transfer Area (DTA)** — A buffer in guest memory where DOS places the results of directory searches (`FindFirst`/`FindNext`) — filename, attributes, size, and packed date/time — in the exact FAT layout a program expects to parse. → @section(the-dos-kernel/the-directory-cache-manufacturing-8-3-names-on-the-fly).
+
+**DMA (Direct Memory Access)** — A mechanism (the 8237 controller) letting a device move blocks of data to or from memory without the CPU executing an instruction per byte; operates on physical addresses directly, independent of any CPU core. → @section(dma-and-pit/the-8237-taking-turns-on-the-bus)–@section(dma-and-pit/how-a-device-actually-uses-a-channel).
+
+**DOS/V** — A family of Japanese (and later Korean, and simplified/traditional Chinese) DOS localizations that rendered East Asian text entirely in software on unmodified IBM-compatible AT hardware, drawing glyphs into ordinary VGA graphics memory rather than relying on any hardware font ROM. → @section(dosbox-x-extensions/japanese-dos-and-code-pages-three-answers-to-the-same-problem).
+
+**DSP (Digital Signal Processor, Sound Blaster sense)** — Sound Blaster-era marketing name for the chip that receives digitized-audio playback commands; despite the name, closer to a small command processor than a general-purpose signal-processing chip. → @section(sound/understanding-dos-audio-playback-synthesis-and-midi).
+
+**El Torito** — The boot specification letting a CD-ROM act as a boot device, presenting a section of the disc as a virtual floppy or hard-disk image to INT 13h at boot time; DOSBox-X implements both its "emulation" and "no emulation" boot modes. → @section(the-bios-layer/int-13h-a-whole-filesystem-s-worth-of-fidelity-and-a-few-deliberate-no-ops).
+
+**EMS (Expanded Memory Specification)** — A pre-386 standard for accessing memory beyond 1 MB by bank-switching 16 KB pages into a fixed window inside the normal address space. → @section(memory-model-and-address-translation/beyond-conventional-memory-ems-xms-and-umbs).
+
+**EOI (End of Interrupt)** — A command an interrupt handler sends back to the PIC (via its command port) to signal that servicing is complete, clearing the corresponding in-service bit and allowing same- or lower-priority interrupts to be serviced again. → @section(interrupts-exceptions-pic/software-interrupts-the-guest-interrupts-itself).
+
+**ESC/P** — Epson's printer command language, the de facto standard for DOS-era dot-matrix printers, in which an ESC-prefixed sequence selects font styles, page geometry, and other print behavior; DOSBox-X's virtual printer actually interprets these commands and renders the result as a page. → @section(serial-parallel-peripherals/the-parallel-port-and-the-printer-that-actually-prints).
+
+**Far pointer** — A pointer represented as an explicit segment:offset pair, capable of addressing anywhere in the 20-bit real-mode address space, as opposed to a "near" pointer that only carries an offset within the current segment.
+
+**Fast path / slow path** — A recurring design pattern in DOSBox-X (and emulators generally): handle the common, simple case as cheaply as possible, and fall back to more expensive, general-purpose handling only for the exceptional case. Seen in the memory TLB (@chapter(memory-model-and-address-translation)), lazy flags (@chapter(interpreter-core)), self-modifying-code detection (@chapter(dynamic-recompilation)), and the video presentation handoff (@chapter(host-abstraction-sdl)).
+
+**FAT (File Allocation Table)** — The file system MS-DOS made standard, built around a table recording which storage clusters belong to which file; its on-disk formats (FAT12/16/32) define the packed timestamps, directory entries, and 8.3 naming conventions this book's DOS chapter reads byte-for-byte. → @section(the-dos-kernel/packed-time-packed-date-a-fat-timestamp-hiding-in-a-stat-struct).
+
+**FM synthesis (Frequency Modulation synthesis)** — A music-generation technique where simple oscillators ("operators") modulate each other's frequency to produce complex timbres; implemented in the Yamaha OPL2/OPL3 chips on AdLib and Sound Blaster cards, and distinct from both sample playback and wavetable synthesis. → @section(sound/fm-synthesis-a-second-chip-sharing-the-same-card).
+
+**Guest** — The system being emulated (in this book, a DOS-era PC and the software running on it), as distinct from the **host**, the real machine DOSBox-X itself runs on.
+
+**HMA (High Memory Area)** — The roughly 64 KB region just above the 1 MB boundary, reachable from real mode once the A20 gate is enabled; managed by XMS and often used to load the DOS kernel itself, keeping it out of conventional memory. → @section(memory-model-and-address-translation/beyond-conventional-memory-ems-xms-and-umbs).
+
+**IDT (Interrupt Descriptor Table)** / **IVT (Interrupt Vector Table)** — The table an interrupting CPU consults to find the address of the appropriate handler; called the IVT in real mode (four bytes per entry: offset + segment) and the IDT in protected mode. → @section(interrupts-exceptions-pic/the-hardware-answer-the-8259-pic).
+
+**IMR (Interrupt Mask Register)** — An 8259 PIC register recording which interrupt lines are currently disabled ("masked") by the guest. → @section(interrupts-exceptions-pic/life-of-a-timer-tick).
+
+**Index/data register pair** — A common hardware pattern where one I/O port selects which internal register a following write targets, and a second port supplies the value; used by VGA's CRTC, Sequencer, and Graphics Controller. → @section(vga-emulation/the-source-tree-as-a-map).
+
+**Instrumentation** — The emulator layer that *observes* behavior without being the behavior — logging, tracing, breakpoints, watchpoints, and profiling counters — as distinct from emulation itself, which reproduces what real hardware does. → @section(debugger-logging-static-analysis/instrumentation-as-an-architectural-layer).
+
+**INT 21h** — The DOS software-interrupt vector through which nearly every DOS service — file I/O, process control, memory management — is reached, dispatched on the value in `AH`; DOSBox-X implements it as one large native C++ switch statement behind the callback-trap mechanism. → @section(the-dos-kernel/int-21h-dispatch-the-single-switch-statement-underneath-all-of-dos).
+
+**IRR (Interrupt Request Register)** — An 8259 PIC register recording which interrupt lines currently have a pending, unserviced request. → @section(interrupts-exceptions-pic/life-of-a-timer-tick).
+
+**IRQ (Interrupt Request line)** — A physical (or, under emulation, logical) line a device asserts to request the CPU's attention via the PIC.
+
+**ISR (In-Service Register)** — An 8259 PIC register recording which interrupt is currently being serviced, used to prevent lower-priority interrupts from preempting it. → @section(interrupts-exceptions-pic/life-of-a-timer-tick).
+
+**Latch register (VGA)** — A 32-bit register that silently loads all four memory planes at an address on every VGA memory read, regardless of which plane the read appears to target; write modes 1 and 3 reuse its contents to affect multiple planes from a single CPU write. → @section(vga-emulation/hardware-blocks-what-each-sub-chip-does).
+
+**Lazy flags** — A CPU-core design where condition-flag bits (ZF, CF, OF, etc.) aren't computed at the moment an instruction executes, but deferred until something actually queries them, using recorded operands and an operation-type tag. → @section(interpreter-core/flags-computed-only-when-someone-asks).
+
+**Linear address** — The address that comes out of segmentation and, if paging is enabled, is the *input* to the paging translation stage; identical to the physical address when paging is disabled. → @section(memory-model-and-address-translation/linear-physical-and-why-dosbox-x-bothers-with-both).
+
+**Long File Name (LFN)** — A filename longer than the 8.3 format allows, stored across extra FAT directory entries; DOSBox-X's directory cache manufactures a legal 8.3 name for every long host filename, using the same tilde-numbering convention (`LONGFI~1.TXT`) real Windows' VFAT layer used. → @section(the-dos-kernel/the-directory-cache-manufacturing-8-3-names-on-the-fly).
+
+**Mapper (DOSBox-X sense)** — A configurable input-remapping subsystem that binds physical joystick (and other) input to emulated device functions, rather than assuming a fixed correspondence. → @section(host-abstraction-sdl/input-keyboard-mouse-and-joystick-three-different-shapes).
+
+**MCB (Memory Control Block)** — A small header, living in guest conventional memory immediately before the block of memory it describes, that records the block's size, its owning program, and whether more blocks follow; real MS-DOS tracked all conventional memory as a singly-linked chain of these. → @section(the-dos-kernel/the-mcb-chain-dos-s-free-list-living-in-guest-memory).
+
+**MIDI (Musical Instrument Digital Interface)** — A communication protocol for musical *control*, carrying events ("note on, pitch C4, velocity 90") rather than audio; the receiving device — a real external synthesizer, an emulated MT-32, or a software synth — is what actually produces sound. → @section(sound/understanding-dos-audio-playback-synthesis-and-midi), @section(sound/midi-one-interface-several-genuinely-different-destinations).
+
+**MidiHandler** — DOSBox-X's shared interface behind every MIDI backend, spanning both host passthrough (ALSA, OSS, Win32, CoreMIDI) and software synthesis (MT-32 emulation, FluidSynth); a minimal four-method virtual interface deliberately narrow enough not to need to know which kind of backend it's talking to. → @section(sound/midi-one-interface-several-genuinely-different-destinations).
+
+**ModRM byte** — The byte following many x86 opcodes that specifies operand addressing: a 2-bit `mod` field, a 3-bit `reg` field, and a 3-bit `rm` field, a split that maps cleanly onto octal digits because of the instruction set's 8080-derived lineage. → @section(interpreter-core/operands-the-modrm-byte-and-the-ea-table)–@section(interpreter-core/flags-computed-only-when-someone-asks).
+
+**Null modem** — A serial link between two computers that swaps transmit/receive and control lines the way a real crossover cable would, so each end sees the other's signals; in DOSBox-X a null-modem link is often actually a TCP socket, with control-line state carried in-band over the same byte stream. → @section(serial-parallel-peripherals/null-modem-and-modem-a-cable-that-isn-t-there).
+
+**PageHandler** — DOSBox-X's abstraction letting any range of the address space be backed by device-specific read/write logic instead of plain RAM. → @section(memory-model-and-address-translation/from-address-translation-to-memory-mapping).
+
+**Patched/vendored SDL** — DOSBox-X's own modified fork of SDL, carrying additional entry points (e.g. `SDL_hax_SetFSWindowPosition`) beyond what upstream SDL exposes, used in at least some build configurations for window-management behavior stock SDL doesn't support. → @section(host-abstraction-sdl/getting-a-window-on-screen-init-lifecycle-and-dosbox-x-s-own-sdl-patches).
+
+**PC-98** — NEC's line of Japanese personal computers, largely incompatible with the IBM-compatible baseline — different BIOS conventions, interrupt assignments, and graphics subsystem — modeled by DOSBox-X as a full parallel machine type rather than a graphics mode, behind the pervasive `IS_PC98_ARCH` conditional. → @section(dosbox-x-extensions/pc-98-not-a-graphics-mode-a-different-computer).
+
+**Physical address** — The final address that actually identifies a location in emulated memory or a memory-mapped device, after all translation stages (segmentation, and paging if enabled) have been applied.
+
+**PIC (Programmable Interrupt Controller)** — In this book, almost always refers to the Intel 8259 chip (and DOSBox-X's emulation of it), not to be confused with "Position-Independent Code," an unrelated meaning of the same acronym common in modern systems programming.
+
+**PIO (Programmed I/O)** — Moving data by having the CPU itself execute a load/store instruction per byte, as opposed to DMA; correct, but expensive when a device demands a continuous stream, since every byte costs the CPU's undivided attention. → @section(dma-and-pit/the-8237-taking-turns-on-the-bus).
+
+**PIT (Programmable Interval Timer)** — The 8253/8254 chip providing three independent countdown counters fed by one shared clock and wired to different destinations (system-timer interrupt, DRAM refresh, PC speaker); DOSBox-X models all three channels, including the 18.2 Hz system-tick rate the BIOS derives from channel 0. → @section(main-loop-and-event-scheduler/completing-a-millisecond); @section(dma-and-pit/the-forgotten-half-of-the-timer).
+
+**PPI (Programmable Peripheral Interface)** — The 8255 chip on early IBM PCs that handled several unrelated motherboard functions, including the port-`0x61` bits gating the PIT's speaker channel — which is why DOSBox-X's speaker-control code lives in the keyboard module rather than a sound module. → @section(dma-and-pit/gating-the-speaker-port-0x61-and-a-file-organization-lesson).
+
+**PSP (Program Segment Prefix)** — A 256-byte block DOS places immediately before every running program's code, holding its command line, file-handle table, parent-process link, and (as a fossil of DOS's CP/M ancestry) an `INT 20h` termination stub; DOSBox-X builds one per program, laid out byte-for-byte like real MS-DOS's. → @section(the-dos-kernel/the-psp-a-cp-m-fossil-at-every-program-s-base).
+
+**Pull-based / push-based handoff** — Two shapes a producer/consumer relationship between backend and frontend can take: push (the producer decides when output is ready and hands it off, as with video frames) or pull (the consumer decides when it needs more and requests it, as with SDL's audio callback). → @section(host-abstraction-sdl/a-full-frame-from-gfx-startupdate-to-the-screen), @section(host-abstraction-sdl/audio-a-pull-based-handoff-and-dosbox-x-s-first-thread-boundary).
+
+**Real mode / Protected mode** — The two operating modes of the x86 CPU: real mode, the 8086-compatible mode DOS programs run in, addressing memory through segment:offset with no privilege separation; and protected mode, entered by setting a bit in control register `CR0`, adding memory protection, privilege levels, and (optionally) paging. → @section(memory-model-and-address-translation/the-problem-a-20-bit-address-space-16-bit-registers); @section(timing-and-cycle-management/the-part-that-looks-like-a-bug-and-isn-t-auto-starts-out-fixed).
+
+**Register allocator** — Logic deciding which values stay resident in fast host registers versus being spilled to memory; `core_dyn_x86`'s dynamic core implements a small least-recently-used allocator over guest registers, a design `dynrec`'s portable core deliberately forgoes to keep its code generator host-agnostic. → @section(dynamic-recompilation/where-core-dyn-x86-diverges-a-register-allocator-not-just-a-code-generator).
+
+**RTC (Real-Time Clock)** — The battery-backed clock chip that keeps the date and time while the machine is off, read and written through CMOS register offsets; DOSBox-X models it, along with the INT 1Ah services that expose it, directly. → @section(the-bios-layer/int-1ah-one-vector-three-unrelated-jobs).
+
+**Segmentation** — The x86 real-mode memory scheme that forms a 20-bit address from a segment base (typically paragraph-aligned, held in a segment register) plus an offset, letting a program address anywhere in the first 1 MB with `segment:offset` pairs. → @section(memory-model-and-address-translation/segment-registers-in-dosbox-x-segs-phys).
+
+**Self-modifying code** — Guest code that writes to its own instruction bytes at runtime, a real and recurring pattern in DOS-era software (particularly copy protection) that a dynamic recompiler has to specifically detect and account for. → @section(dynamic-recompilation/self-modifying-code-the-fast-path-s-achilles-heel).
+
+**Shift-JIS / DBCS** — A double-byte character set (DBCS) in which most byte values are a single character but certain lead-byte ranges (`0x81`–`0x9F` and `0xE0`–`0xFC`) signal that the next byte completes a two-byte character; DOSBox-X's generic East Asian text path detects these lead bytes directly. → @section(dosbox-x-extensions/japanese-dos-and-code-pages-three-answers-to-the-same-problem).
+
+**Terminal count** — The moment a DMA transfer's byte counter reaches zero; the 8237 then signals the device that the block is complete, which DOSBox-X reproduces as a `DMA_REACHED_TC` event. → @section(dma-and-pit/the-8237-taking-turns-on-the-bus)–@section(dma-and-pit/how-a-device-actually-uses-a-channel).
+
+**TLB (Translation Lookaside Buffer)** — A cache mapping address ranges to either a direct host memory pointer (fast path) or a `PageHandler` (slow path); named after, but implemented very differently from, a hardware CPU's TLB. → @section(memory-model-and-address-translation/the-tlb-making-the-common-case-fast).
+
+**TSR (Terminate and Stay Resident)** — A DOS program that returns control to the prompt but leaves itself resident in memory, reachable later through an installed interrupt hook; TSRs are a major reason DOS's free-memory chain (the MCB list) and its owner-field labeling matter. → @section(the-dos-kernel/the-mcb-chain-dos-s-free-list-living-in-guest-memory).
+
+**Turbo button** — A physical front-panel switch on many late-1980s/early-1990s PCs that toggled the CPU between full speed and a throttled, period-plausible slow speed for compatibility with software that assumed a fixed clock rate; DOSBox-X's `cycles=` setting is the same idea in software. → @section(main-loop-and-event-scheduler/returning-to-host-time-pacing).
+
+**UART (Universal Asynchronous Receiver/Transmitter)** — The chip implementing a serial port, converting between parallel bytes and a framed serial bit stream at a configurable baud rate; by the early 1990s almost always register-compatible with the 16550, whose register set DOSBox-X models directly. → @section(serial-parallel-peripherals/the-uart-registers-a-real-16550-would-recognize).
+
+**UMA (Upper Memory Area)** — The 384 KB region between the top of conventional memory and the 1 MB boundary (`0xA0000`–`0xFFFFF`), reserved for video RAM, ROM, and (where gaps exist) UMBs. → @section(memory-model-and-address-translation/beyond-conventional-memory-ems-xms-and-umbs).
+
+**UMB (Upper Memory Block)** — A region between conventional memory and the 1 MB boundary, made usable for TSRs and drivers by mapping otherwise-reserved address space to actual RAM.
+
+**VESA (Video Electronics Standards Association)** — The standards body, and the extension spec (VBE / VESA BIOS Extensions) it defined, giving real-mode software a card-agnostic interface to SVGA modes beyond the original VGA limits; DOSBox-X implements it only for the specific SVGA identities on which real VESA support existed. → @section(the-bios-layer/int-10h-mostly-a-real-video-bios).
+
+**Watchpoint** — A debugger facility that halts execution when a watched memory location's value changes, regardless of address; unlike a physical breakpoint, DOSBox-X's watchpoints work by polling the byte on every instruction rather than trapping, which is why they only exist in heavy-debug builds. → @section(debugger-logging-static-analysis/instrumentation-mechanisms-the-full-toolbox).
+
+**Wavetable synthesis** — A music-generation technique playing back pre-recorded sample waveforms at variable pitch, using interpolation to synthesize values between actually-stored samples; the Gravis UltraSound's approach, as opposed to the OPL chip's algorithmic FM synthesis. → @section(sound/the-gravis-ultrasound-wavetable-synthesis-and-its-own-onboard-memory).
+
+**XMS (Extended Memory Specification)** — A standard for accessing memory genuinely above 1 MB (as opposed to EMS's bank-switched window), relying on the A20 gate and brief protected-mode excursions, typically managed by HIMEM.SYS. → @section(memory-model-and-address-translation/beyond-conventional-memory-ems-xms-and-umbs).
+
+---
+
+*This glossary now covers the book through Part V; entries were added incrementally as each chapter introduced its vocabulary, and it will keep growing as chapters are revised or added. If a term you meet in the text isn't here yet, it's the kind of thing this appendix is meant to absorb next.*

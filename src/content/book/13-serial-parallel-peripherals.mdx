@@ -1,0 +1,257 @@
+---
+title: "Serial, Parallel, and Peripheral I/O"
+description: "How DOSBox-X models the 16550 UART's register set and baud-rate timing, null-modem and modem transports (including a TCP socket standing in for a cable that isn't there), the parallel port's ESC/P printer language rendered to real pages, the gameport's RC-timing joystick model, and the three transports a DOS mouse could use behind one INT 33h interface."
+order: 13
+chapterSlug: "serial-parallel-peripherals"
+part: "devices"
+---
+# Chapter 13 — Serial, Parallel, and Peripheral I/O {#chapter-13-serial-parallel-and-peripheral-i-o}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 13.1 Four Peripherals, One Idea: A Byte at a Time {#four-peripherals-one-idea-a-byte-at-a-time}
+
+Every subsystem this book has covered so far earned its complexity honestly. VGA needed a dozen register groups because a real graphics card had a dozen register groups. Sound needed three unrelated chapters-within-a-chapter because a DSP, an OPL chip, and a GUS genuinely worked nothing alike. The peripherals in this chapter are different: a serial port, a parallel port, a joystick, and a mouse are among the simplest devices a DOS-era PC owned. Each one, at its core, does one of two things — moves a byte across a wire, or measures a voltage. There is no synthesis, no interpolation, no wavetable RAM.
+
+What makes them worth a full chapter is not internal complexity but honesty about timing and transport. A UART doesn't just deliver bytes, it delivers them at a rate a real 16550 chip would have enforced, one bit-time at a time, with the same register-level handshake real MS-DOS communications software polled. A "null-modem cable" in DOSBox-X might be a TCP socket to a machine on the other side of the planet, but the DOS program talking to it still believes it's watching real voltage transitions on a serial cable's control pins — and DOSBox-X has to synthesize that belief out of nothing but socket bytes. A parallel port doesn't just log what a DOS word processor sent to LPT1; it interprets the actual Epson printer command language byte by byte and renders real pages. A joystick isn't read as a clean coordinate pair at all — it's read as an elapsed time, because that's genuinely how the hardware worked.
+
+This chapter traces those four peripherals — serial, parallel, joystick, and mouse — and the theme underneath all of them: get a byte, or a voltage, faithfully across a boundary, at the rate and in the form real hardware actually used, no matter how indirect the underlying transport has become.
+
+## 13.2 Two Philosophies for Moving a Byte {#two-philosophies-for-moving-a-byte}
+
+Serial and parallel communication solved the same problem — get data from a PC to a peripheral that isn't the video card, the speaker, or a disk — with opposite tradeoffs.
+
+**Serial** sends one bit at a time, over as few as two data wires, framed by a start bit and one or more stop bits so the receiver can tell where each byte begins and ends without a shared clock signal. This is inherently slower per wire than sending eight bits at once, but it scales to distance: a null-modem cable, a modem over an ordinary phone line, or (as DOSBox-X will show) a socket connection across the internet can all carry a serial byte stream, because framing plus a known bit rate is all two ends need to agree on. DOS's serial ports — COM1 through COM4, historically — spoke through a UART (Universal Asynchronous Receiver/Transmitter), and by the early 1990s that almost always meant something register-compatible with the 16550, the chip whose interface this chapter's source code models directly.
+
+**Parallel** sends a full byte at once, across eight data lines plus a handful of control and status lines, at the cost of cable length and wire count. It was the domain of one peripheral above all others: the printer. The Centronics interface (and its PC-side counterpart, the LPT port) traded serial's flexibility for raw throughput on a cable that, in practice, never had to run more than a few feet from the back of the PC to the printer sitting next to it.
+
+Both, from DOS software's point of view, reduced to the same shape: write a byte to a port, and something on the other end eventually receives it. What differed was how each got there, how fast, and — critically for a game or terminal program — how a device signaled things back: a UART's status register telling software a byte was ready to send or had arrived, a printer's busy line telling a word processor to wait before sending the next character. DOSBox-X keeps those differences intact rather than collapsing "peripheral I/O" into one abstraction, for the same reason @chapter(sound) kept a DSP and an OPL chip apart: a program probing COM1's Line Status Register and a program checking whether LPT1's printer has room for another byte are doing two fundamentally different things, even though both eventually boil down to "is the port ready."
+
+## 13.3 The UART: Registers a Real 16550 Would Recognize {#the-uart-registers-a-real-16550-would-recognize}
+
+DOSBox-X's serial port model lives in `CSerial` (`include/serialport.h`, implemented across `src/hardware/serialport/`), and its design choice is immediately visible in a comment buried in the header: *"I used this spec: st16c450v420.pdf."* This isn't a from-scratch reimagining of "a serial port" as an abstract concept — it's a register-accurate model of a specific, real UART family, because DOS communications software (terminal programs, mouse drivers, modem dialers) didn't call an OS API for serial I/O; it read and wrote the UART's registers directly, the same way a program talked to VGA or the DSP.
+
+The register set will look familiar from that comment's spec sheet:
+
+```cpp
+Bitu Read_RHR();   // Receive Holding Register
+Bitu Read_IER();   // Interrupt Enable Register
+Bitu Read_ISR();   // Interrupt Status Register
+Bitu Read_LCR();   // Line Control Register  (word length, stop bits, parity, divisor-latch enable)
+Bitu Read_MCR();   // Modem Control Register (DTR, RTS, loopback)
+Bitu Read_LSR();   // Line Status Register   (data ready, overrun, framing/parity error, TX empty)
+Bitu Read_MSR();   // Modem Status Register  (CTS, DSR, RI, CD, and their delta bits)
+Bitu Read_SPR();   // Scratchpad Register
+```
+
+Each register is exactly as narrow as the real chip's: `LCR`'s low two bits select word length, its bit 2 selects one or two stop bits, bits 3–5 configure parity, and bit 7 switches the RHR/THR address to instead expose the low byte of the baud-rate divisor — a genuine 16550 quirk (the divisor-latch trick) that DOSBox-X reproduces rather than exposing the baud rate through some cleaner side channel. Software that pokes `LCR` expecting exactly this bit layout — and plenty of real DOS communications code did — gets exactly this bit layout back.
+
+The chip's interrupt behavior is modeled with the same fidelity, down to priority ordering among simultaneous conditions:
+
+```cpp
+#define ERROR_PRIORITY   4   // overrun, parity error, frame error, break
+#define RX_PRIORITY      1   // a byte has been received
+#define TX_PRIORITY      2   // tx buffer has become empty
+#define MSR_PRIORITY     8   // CTS, DSR, RI, DCD change
+#define TIMEOUT_PRIORITY 0x10
+```
+
+`rise()` and `clear()` (`src/hardware/serialport/serialport.cpp`) set and unset these priority bits as conditions come and go, and `ComputeInterrupts()` resolves which single reason `ISR` should report when a guest reads it — a real 16550 exposes only one interrupt cause at a time, in a fixed priority order, and a driver that reads `ISR` to find out *why* it was interrupted depends on that ordering being right. This is a smaller, quieter version of the DSP's command dispatch from @chapter(sound): not a chip that computes audio, but a chip whose entire externally-visible behavior is defined by a handful of registers, and DOSBox-X earns compatibility by matching those registers bit-for-bit rather than approximating "serial port-ness" in the abstract.
+
+The FIFO path adds one more layer of realism worth noting: `CanReceiveByte()` checks whether the receive FIFO (`rxfifo`, a `MyFifo` ring buffer) has room, and `receiveByteEx()` — the single entry point every backend uses to hand DOSBox-X's serial layer an incoming byte, whether it came from a real host COM port, a TCP socket, or a serial mouse — pushes into that FIFO and raises `RX_PRIORITY` once occupancy crosses `rx_interrupt_threshold`, or arms a receive-timeout event if it doesn't. Push past a full FIFO and `addb()` (`include/serialport.h`) doesn't grow the buffer; it overwrites the last byte and reports failure, which `receiveByteEx` turns into a genuine `LSR_OVERRUN_ERROR_MASK` condition — the same failure mode a real UART's silicon would produce under sustained overrun, not something DOSBox-X quietly hides by simply accepting more data than the chip it's emulating ever could.
+
+## 13.4 Byte Time: Turning a Baud Rate into a Delay the Scheduler Understands {#byte-time-turning-a-baud-rate-into-a-delay-the-scheduler-understands}
+
+A baud rate is, at bottom, a promise about *time* — "this many bits per second" — and DOSBox-X has to turn that promise into actual scheduled delays, the same way @chapter(main-loop-and-event-scheduler) established for the PIT and @chapter(sound) reused for the DSP's reset handshake. `CSerial::changeLineProperties()` (`src/hardware/serialport/serialport.cpp`) is where the promise becomes a number:
+
+```cpp
+void CSerial::changeLineProperties() {
+    float bitlen;
+    if(baud_divider==0) bitlen=(1000.0f/(115200.0f*baud_multiplier));
+    else bitlen = (1000.0f/(115200.0f*baud_multiplier))*(float)baud_divider;
+    bytetime=bitlen*(float)(1+5+1);      // startbit + minimum length + stopbit
+    bytetime+= bitlen*(float)(LCR&0x3);  // databits
+    if(LCR&0x4) bytetime+=bitlen;        // 2nd stopbit
+    if(LCR&0x8) bytetime+=bitlen;        // parity
+    updatePortConfig (baud_divider*baud_multiplier, LCR);
+}
+```
+
+`115200` is the 16550's maximum standard rate; `baud_divider` is exactly the value software wrote into the divisor latch a moment earlier through that `LCR` bit-7 trick, so `1000.0f/(115200.0f*baud_multiplier)*baud_divider` reconstructs the actual configured bit time in milliseconds. `bytetime` then accumulates one bit-length for the mandatory start bit, five for a conservative minimum data-bit count, one for a stop bit, and then adds back in whatever `LCR` actually specifies for word length, a second stop bit, and parity — arriving at exactly how long, in emulated milliseconds, one complete framed byte takes to cross the wire at the currently configured rate. A program that sets 300 baud gets bytes that take roughly thirty times longer to arrive than one set to 9600 baud, not because DOSBox-X special-cases slow rates, but because `bytetime` itself is thirty times longer and every scheduled event downstream inherits that.
+
+That `bytetime` value feeds directly into @chapter(main-loop-and-event-scheduler)'s event queue:
+
+```cpp
+void CSerial::setEvent(uint16_t type, float duration) {
+    PIC_AddEvent(Serial_EventHandler,duration,(Bitu)(((unsigned int)type<<4u)|(unsigned int)idnumber));
+}
+```
+
+— the identical scheduler that paces VGA retrace, PIT ticks, and the DSP's twenty-microsecond reset delay is what tells a UART emulation, `bytetime` milliseconds from now, that a byte has finished transmitting or that it's time to check for a new one. Loopback mode (`MCR`'s bit 4, used by DOS diagnostic and self-test software) makes the two-stage nature of a real UART's transmit path visible in the event chain itself:
+
+```cpp
+case SERIAL_THR_LOOPBACK_EVENT: {
+    loopback_data=txfifo->probeByte();
+    ByteTransmitting();
+    setEvent(SERIAL_TX_LOOPBACK_EVENT,bytetime);
+    break;
+}
+case SERIAL_TX_LOOPBACK_EVENT: {
+    receiveByte (loopback_data);
+    ByteTransmitted ();
+    break;
+}
+```
+
+A real 16550 holds a byte in the Transmit Holding Register only briefly before it moves into an internal shift register and starts actually going out bit by bit; DOSBox-X reproduces that as two separate scheduled events rather than one, with the second one — the actual bit-by-bit transmission — taking the full `bytetime` delay while the first is nearly instantaneous. Loopback mode's entire job is to route a transmitted byte straight back in as a received one, and modeling it with the same two-event structure as ordinary transmission means a diagnostic program timing its own loopback test sees the same shape of delay a real chip's self-test would have produced.
+
+## 13.5 Null-Modem and Modem: A Cable That Isn't There {#null-modem-and-modem-a-cable-that-isn-t-there}
+
+DOS's serial port wasn't only used for mice and printers with a serial interface — it was DOS's primary way of talking to another computer at all, whether through a genuine modem dialing over a phone line or a null-modem cable running directly between two nearby machines for file transfer or (very often) multiplayer gaming. DOSBox-X keeps both models, and both, revealingly, are eventually implemented on top of a TCP socket rather than any real serial hardware or phone line — which forces an interesting problem: a socket has no separate wires for the control-line signaling (RTS, DTR, CTS, DSR, CD) a real RS-232 cable carried, only one ordered byte stream. `CNullModem` (`src/hardware/serialport/nullmodem.cpp`) has to invent a way to carry those signals *in-band*, over the same stream as the actual data.
+
+Its solution is a classic escape-byte protocol. An outgoing `0xff` byte gets doubled (`0xff 0xff`) so the peer knows it was genuine payload, not a control message; any other `0xff` immediately followed by a second byte is that control message, whose bits the peer decodes directly into modem status lines:
+
+```cpp
+else if (rxchar==0xff && !transparent) {// escape char
+    state = clientsocket->GetcharNonBlock(val);
+    if (state != SocketState::Good) return -1;
+    Bits rxchar = val;
+    if (rxchar==0xff) return rxchar;        // 0xff 0xff -> 0xff was meant
+    rxchar&0x1? setCTS(true) : setCTS(false);
+    rxchar&0x2? setDSR(true) : setDSR(false);
+    if (rxchar&0x4) receiveByteEx(0x0,0x10); // bit 2: a break condition
+    return -1; // no "payload" received
+}
+```
+
+and the transmitting side sends the mirror image whenever the guest's own line state changes:
+
+```cpp
+void CNullModem::setRTSDTR(bool xrts, bool xdtr) {
+    if (!transparent) {
+        uint8_t control[2];
+        control[0]=0xff;
+        control[1]=0x0;
+        if (xrts) control[1]|=1;
+        if (xdtr) control[1]|=2;
+        if (LCR&LCR_BREAK_MASK) control[1]|=4;
+        if (clientsocket) clientsocket->SendArray(control, 2);
+    }
+}
+```
+
+Read those two functions together and a real null-modem cable's crossover wiring falls out naturally: my RTS line becomes your CTS input, my DTR becomes your DSR — exactly what a genuine null-modem cable's internally-swapped pins would have done, just carried as two bytes over a socket instead of a voltage change on a physical pin. (Carrier Detect, notably, isn't part of that swap at all: `CNullModem` drives `CD` directly from whether the socket itself is connected — `setCD(!!clientsocket)` — because on a real null-modem link there's no far-end modem to report "carrier," only the presence or absence of the connection itself, which a TCP socket can answer more directly than any escaped control byte could.) A DOS terminal program raising DTR to signal "ready" and watching for CTS/DSR to come up on the other end behaves identically whether the two ends are a real cable across a desk or two DOSBox-X instances five thousand miles apart — because from the guest's point of view, `getCTS()`/`getDSR()` are the same base-class `CSerial` accessors either way, and it's `CNullModem`'s job alone to keep them truthful.
+
+An optional `telnet` mode layers real Telnet protocol negotiation (`TelnetEmulation()`, handling the IAC WILL/WONT/DO/DONT option-negotiation sequence for binary mode, local echo, and Suppress-Go-Ahead) on top of the same socket, which is what lets a null-modem connection double as a way to dial into an ordinary Telnet BBS — and it's precisely because Telnet's own escape byte is also `0xff` that `transparent` mode exists as an explicit way to turn off the control-line-escaping described above: two different protocols both reaching for the same 0xff-means-something-follows convention, on the same byte stream, is exactly the kind of collision `transparent` exists to let the user resolve by hand.
+
+Sitting alongside `CNullModem` is a genuinely different model, `CSerialModem` (`src/hardware/serialport/softmodem.cpp`): a Hayes-compatible AT-command modem, complete with S-registers (`reg[MREG_RING_COUNT]`, `reg[MREG_AUTOANSWER_COUNT]`, and the rest of the classic Hayes register bank) and the familiar response strings a DOS user would have watched scroll by — `"RING"`, `"CONNECT 57600"`, `"NO CARRIER"` — sent back up the same `CSerial::receiveByte` path everything else in this chapter uses. Where `CNullModem` is a raw, mostly-transparent pipe with just enough signaling to imitate a cable, `CSerialModem` is a small parser and state machine standing in for the modem itself — dialing, ring detection, auto-answer counters — which happens to also carry its actual connection over TCP once a "call" succeeds. The two classes model two different real devices that DOS software addressed identically (both are just `CSerial` subclasses reachable at the same `SERIAL_TYPE_MODEM` / `SERIAL_TYPE_NULL_MODEM` port), but a program dialing a BBS with AT commands and a program expecting a pre-connected null-modem link were never talking to the same kind of hardware, and DOSBox-X keeps them as separate implementations for exactly that reason.
+
+## 13.6 The Parallel Port and the Printer That Actually Prints {#the-parallel-port-and-the-printer-that-actually-prints}
+
+If serial is DOSBox-X modeling a chip's registers, the parallel port's most interesting DOSBox-X-specific work happens one layer up, in what's actually listening on the other end: `src/hardware/parport/printer.cpp` doesn't just capture bytes written to LPT1 into a raw dump file. It implements a real interpreter for the printer command language those bytes were written in — the Epson ESC/P control codes that had become the de facto standard dot-matrix printer language by the DOS era, inherited by nearly every subsequent consumer printer regardless of manufacturer — and renders the result as an actual page.
+
+The command dispatch will look immediately familiar in shape, if not in vocabulary, to the DSP's command processor from @chapter(sound):
+
+```cpp
+if (ESCSeen || FSSeen) {
+    ESCCmd = ch;
+    if(FSSeen) ESCCmd |= FS_COMMAND;
+    ESCSeen = FSSeen = false;
+    switch (ESCCmd) {
+        case 0x40: // Initialize printer                          (ESC @)
+        case 0x45: // Select bold font                             (ESC E)
+        case 0x46: // Cancel bold font                              (ESC F)
+        case 0x34: // Select italic font                            (ESC 4)
+        case 0x0e: // Select double-width printing (one line)       (ESC SO)
+        ...
+```
+
+Where the DSP's commands configured a DMA transfer or a sample rate, here each command flips a bit in a running style bitmask — `STYLE_BOLD`, `STYLE_ITALICS`, `STYLE_DOUBLEWIDTH`, `STYLE_CONDENSED`, and so on (`src/hardware/parport/printer.h`) — that governs how subsequent printable characters get rendered. And "rendered" is literal: `CPrinter` links against FreeType (`#include FT_FREETYPE_H`) to actually rasterize glyphs onto a page bitmap at a configured DPI, tracking cursor position, line spacing, and page geometry the way a real dot-matrix printer's print head and paper feed would have. When a page is complete, DOSBox-X can write it out as a genuine PNG file through libpng —
+
+```cpp
+png_set_IHDR(png_ptr, info_ptr, page->w, page->h, ...);
+...
+png_write_png(png_ptr, info_ptr, 0, NULL);
+```
+
+— or, on Windows, skip the file entirely and hand the rendered page to a real printer driver through the Windows GDI printing API (`StartDoc`, the `printerDC` device context), meaning DOSBox-X's "virtual printer" can end with an actual sheet of paper coming out of an actual physical printer, just as legitimately as a `.png` landing on disk. Either way, what a DOS word processor believes it's doing — sending ESC/P escape sequences to control bold, italics, and line spacing on a dot-matrix printer — is exactly what's happening on DOSBox-X's end too; only the very last step, ink versus pixels, differs from 1992.
+
+## 13.7 The Joystick: An Analog Peripheral in a Digital Machine {#the-joystick-an-analog-peripheral-in-a-digital-machine}
+
+Everything else in this chapter moves discrete bytes. The PC gameport, read at I/O port `0x201`, is different in kind: on real hardware it wasn't a digital interface to the joystick's position at all, it was an analog one, and DOSBox-X's `src/hardware/joystick.cpp` reproduces the actual electrical trick real DOS software depended on rather than substituting a clean digital reading.
+
+A real gameport paired each analog axis with a potentiometer inside the joystick and a one-shot timer circuit (classically, a 558 quad timer) on the card. Writing any value to port `0x201` triggered all four one-shots simultaneously, each of which then held its corresponding output bit high for a duration set by an RC circuit — resistance supplied by the joystick's potentiometer, meaning further the stick was pushed in a given direction, the longer that bit stayed high before dropping. Software measured stick position not by reading a coordinate, but by timing how long each bit remained set after the write — literally counting CPU cycles, on real 1980s software, or in DOSBox-X's case, comparing against a scheduled expiry time.
+
+DOSBox-X actually carries two implementations of this, toggled by configuration, and reading them side by side shows the emulator's own history of getting this right. The older model counts down a coarse tick counter on every read:
+
+```cpp
+static Bitu read_p201(Bitu port,Bitu iolen) {
+    uint8_t ret=0xff;
+    if (stick[0].enabled) {
+        if (stick[0].xcount) stick[0].xcount--; else ret&=~1;
+        if (stick[0].ycount) stick[0].ycount--; else ret&=~2;
+        ...
+```
+
+— accurate in spirit (a bit that's still counting down reads as still-high) but only as precise as how often the guest happens to poll it. The `_timed` variant instead precomputes the exact moment in emulated time each axis's one-shot will expire, using the real hardware's actual RC time constant:
+
+```cpp
+// Axes take time = 24.2 microseconds + ( 0.011 microseconds/ohm * resistance )
+stick[0].xtick = currentTick + 1000.0*( JOY_S_CONSTANT + S_PER_OHM *
+                     (double)((stick[0].xpos+1.0)* OHMS) );
+```
+
+and then a read is simply a comparison against the clock:
+
+```cpp
+static Bitu read_p201_timed(Bitu port,Bitu iolen) {
+    uint8_t ret=0xff;
+    double currentTick = PIC_FullIndex();
+    if( stick[0].enabled ){
+        if( stick[0].xtick < currentTick ) ret &=~1;
+        if( stick[0].ytick < currentTick ) ret &=~2;
+    }
+    ...
+```
+
+`PIC_FullIndex()` is @chapter(main-loop-and-event-scheduler)'s clock again, but note what's different here from every other use of it in this book: nothing is *scheduled*. There's no `PIC_AddEvent` counting down to a gameport interrupt, because a real gameport never generated one — DOS software had to actively poll `0x201` in a tight timing loop to measure the stick, exactly as read_p201_timed's design still expects. `JOY_S_CONSTANT` (24.2 microseconds) and `S_PER_OHM` (0.011 microseconds per ohm) aren't tuned emulator constants; they're the real RC one-shot's timing formula, meaning a program written against real gameport hardware's known timing characteristics — and there were such programs, since the format was never a documented digital protocol, only an electrical behavior everyone reverse-engineered the same way — sees the same relationship between stick position and measured delay that it would have on a real 558-based card.
+
+## 13.8 The Mouse: Three Transports, One DOS API {#the-mouse-three-transports-one-dos-api}
+
+A DOS mouse, from the perspective of the game or application reading it, was almost always the same thing: INT 33h, the Microsoft Mouse driver interface, queried for position and button state. But *how* that position and button state actually reached the PC varied by physical transport, and DOSBox-X keeps those transports as separate as they were on real hardware, unified only at the INT 33h layer software actually called (`src/ints/mouse.cpp`) — the same "one interface, genuinely different implementations underneath" shape @chapter(sound) found in `MidiHandler`.
+
+The serial mouse (`CSerialMouse`, `src/hardware/serialport/serialmouse.cpp`) is a `CSerial` device like everything in @section(serial-parallel-peripherals/the-uart-registers-a-real-16550-would-recognize) through 11.5 — it speaks the Microsoft Serial Mouse protocol as three-byte motion packets over an ordinary COM port, timed through the exact same `bytetime`/`setEvent` machinery a null-modem connection uses:
+
+```cpp
+/* Byte 0:    X   1  LB  RB  Y7  Y6  X7  X6 */
+packet[0] = 0x40 | (mouse_buttons << 4) | (((mouse_delta_y >> 6) & 3) << 2) | ((mouse_delta_x >> 6) & 3);
+/* Byte 1:    X   0  X5-X0 */
+packet[1] = 0x00 | (mouse_delta_x & 0x3F);
+/* Byte 2:    X   0  Y5-Y0 */
+packet[2] = 0x00 | (mouse_delta_y & 0x3F);
+```
+
+But the detail worth pausing on is how the mouse announces itself, because it reuses this chapter's control-line machinery for a purpose that has nothing to do with modems or null-modem cables at all:
+
+```cpp
+void CSerialMouse::setRTSDTR(bool rts, bool dtr) {
+    if (rts && dtr && !getRTS() && !getDTR()) {
+        /* The serial mouse driver turns on the mouse by bringing up
+         * RTS and DTR. Not just for show, but to give the serial mouse
+         * a power source to work from. ... We're expected to transmit
+         * ASCII character 'M' when first initialized, so that the driver
+         * knows we're a Microsoft compatible serial mouse. */
+        onMouseReset();
+    }
+    ...
+```
+
+A real Microsoft-compatible serial mouse had no battery and no external power connector — it drew what little current it needed to run its optical/mechanical sensing straight off the RS-232 control lines, which is why a mouse driver's very first act was raising RTS and DTR: not a handshake in the data-protocol sense, but literally switching the mouse on. DOSBox-X's `setRTSDTR` override does double duty accordingly — it's the same virtual method `CNullModem` uses purely for signaling in @section(serial-parallel-peripherals/null-modem-and-modem-a-cable-that-isn-t-there), but here a rising edge on those two lines triggers `onMouseReset()`, which sends the identifying `'M'` byte back up the line so the driver can confirm what kind of device it just powered up. Two entirely different `CSerial` subclasses, two entirely different reasons to care about RTS and DTR, unified only by both being reachable through the same base-class accessors.
+
+Serial was never the only transport, though — by the early 1990s the PS/2 mouse port had become just as common, addressed through an entirely different path: a BIOS-level callback (`Mouse_SetPS2State()`, `Mouse_ChangePS2Callback()`, `include/mouse.h`) invoked through INT 15h rather than the UART registers this chapter has otherwise been describing, closer in spirit to a keyboard interrupt than a serial peripheral. And DOSBox-X's PC-98 support (already met in @chapter(sound)'s OPL port addressing) adds a third variant again, `PC98_INT15_Handler()` (`src/ints/mouse.cpp`), because the NEC PC-98's own mouse convention used INT 15h differently still. All three — serial mouse, PS/2 BIOS mouse, PC-98 mouse — ultimately feed the same `INT33_Handler()` that DOS application software actually queried, which is exactly the point: a game reading the mouse through INT 33h never knew or cared whether a serial UART, a PS/2 controller, or PC-98's own BIOS convention was the thing actually producing the numbers, and neither does DOSBox-X's implementation of that interface — it's three separate input paths converging on one documented API, the transport differences fully contained below the line software actually depended on.
+
+## 13.9 What Carries Forward {#what-carries-forward}
+
+None of the four peripherals in this chapter required anything like VGA's register sprawl or sound's competing synthesis techniques. What they required instead was honesty about two things this book keeps returning to: timing, and transport. A UART's `bytetime` isn't a convenience number, it's a real bit rate turned into a real scheduled delay through the same event queue that paces every other timed thing in this emulator. A null-modem connection's RTS and DTR aren't just booleans DOSBox-X tracks internally — they're bytes actually sent across whatever transport stands in for the missing cable, because the DOS software on each end genuinely depends on seeing them change. A parallel port's printer output isn't a dump of raw bytes, it's the result of actually running those bytes through the printer language they were written in. A joystick reading isn't a clean digital coordinate, because a real gameport never produced one.
+
+The common thread across every chapter so far — model the specific hardware, not the category of device — holds here in its plainest form: not because these peripherals are hard, but because getting a simple thing exactly right still means resisting the temptation to simplify it further than the real hardware ever was.

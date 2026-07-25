@@ -1,0 +1,67 @@
+---
+interface Props {
+  title: string;
+  chapterNumber?: string;
+  description?: string;
+  minutesRead?: string;
+  part?: string;
+}
+
+const { title, chapterNumber, description, minutesRead, part } = Astro.props;
+---
+
+<header class="chapter-header">
+  {part && <p class="chapter-part">{part}</p>}
+  {chapterNumber && <p class="chapter-number">Chapter {chapterNumber}</p>}
+  <h1 id="top">{title}</h1>
+  {description && <p class="chapter-description">{description}</p>}
+  {minutesRead && <p class="chapter-meta">{minutesRead}</p>}
+</header>
+
+<style>
+  .chapter-header {
+    margin-bottom: calc(var(--baseline) * 2.5);
+    padding-bottom: calc(var(--baseline) * 1.5);
+    border-bottom: 2px solid var(--color-accent);
+  }
+
+  .chapter-part {
+    margin: 0 0 0.5rem;
+    color: var(--color-accent);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .chapter-number {
+    margin: 0 0 0.5rem;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .chapter-header h1 {
+    max-width: 20ch;
+    margin: 0 0 1rem;
+    font-size: clamp(2.25rem, 4vw, 3.25rem);
+    line-height: 1.05;
+  }
+
+  .chapter-description {
+    max-width: var(--prose-width);
+    margin: 0;
+    color: var(--color-muted);
+    font-size: 1.1rem;
+    line-height: 1.6;
+  }
+
+  .chapter-meta {
+    margin: 0.75rem 0 0;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+  }
+</style>

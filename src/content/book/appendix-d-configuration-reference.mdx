@@ -1,0 +1,41 @@
+---
+title: "Appendix D — Configuration Reference"
+description: "A living reference to dosbox-x.conf settings mentioned throughout this book, organized by section and key."
+order: 21
+chapterSlug: "appendix-d-configuration-reference"
+part: "appendices"
+---
+# Appendix D — Configuration Reference {#appendix-d-configuration-reference}
+
+*A living reference to `dosbox-x.conf` settings mentioned throughout this book. This appendix is built incrementally, one chapter at a time — every setting introduced in the main text is added here the moment it's introduced, with a pointer back to the chapter that explains what it does and why. Settings that don't receive a full narrative treatment elsewhere are still documented here in full; this appendix is the complete reference regardless of how much prose a given setting earned in the chapters themselves.*
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. Settings, defaults, and legal values will drift as the project moves; treat entries as coordinates into a moving target, not a permanent specification. Always check `dosbox-x.conf -all` or the current source for authoritative values.)*
+
+## How to Use This Appendix {#how-to-use-this-appendix}
+
+Entries are organized by `.conf` section, in the order those sections were first introduced in the book, and alphabetically by key within each section once a section has more than a handful of entries. Each entry has the shape:
+
+> **`key`** *(type, default)* — one-line description. Legal values, if constrained. → Chapter reference, if one exists.
+
+An entry with no chapter reference hasn't yet received narrative treatment in the main text — either because that chapter hasn't been written yet, or because the setting is minor enough not to warrant one. Check back as later chapters are added; this appendix will grow to match.
+
+---
+
+## `[cpu]` {#cpu}
+
+- **`core`** *(string, `auto`)* — which CPU execution core to use. Legal values include `auto`, `normal`, `dynamic`, `simple`, among others. → @section(dosbox-x-architecture/configuration-as-its-own-layer); full treatment in Chapters 5–6.
+- **`cputype`** *(string, `auto`)* — which x86 CPU generation to emulate (affects available instructions and some timing behavior). → @section(dosbox-x-architecture/configuration-as-its-own-layer).
+- **`cycles`** *(string, `auto`)* — how many CPU cycles to run per emulated millisecond; `auto`, `max`, or a fixed number. This is the setting `CPU_CycleMax`/`CPU_Cycles` are ultimately sourced from. → @section(dosbox-x-architecture/configuration-as-its-own-layer); @section(main-loop-and-event-scheduler/completing-a-millisecond)–@section(main-loop-and-event-scheduler/closing); full treatment planned for @chapter(timing-and-cycle-management).
+
+## `[sdl]` {#sdl}
+
+- **`output`** *(string, `default`)* — which presentation backend to use for video output. Legal values include `surface`, `openglnb`, `openglpp`, `ttf`, among others (see `SCREEN_TYPES` in `include/sdlmain.h`). → @section(host-abstraction-sdl/presentation-backends-one-file-per-backend).
+- **`display`** *(int, `0`)* — which physical display/screen to use on a multi-monitor host (`0` = default). Not covered in narrative text anywhere in the book yet.
+- **`videodriver`** *(string, empty)* — forces a specific underlying SDL video driver (e.g. `windib`, `directx`, `x11`, `fbcon`, `dummy`). → not yet covered in depth.
+- **`transparency`** *(int, `0`, range `0`–`90`)* — window transparency level. Documented in source as available "on SDL2 and Windows SDL1 builds" — not universally available under SDL1. → @section(host-abstraction-sdl/sdl1-and-sdl2-two-frontend-generations-one-codebase) (used there as the example of SDL1/SDL2 feature asymmetry).
+- **`titlebar`** *(string, empty)* — custom text prepended to the window title bar, read by `GFX_SetTitle()`. → @section(host-abstraction-sdl/getting-a-window-on-screen-init-lifecycle-and-dosbox-x-s-own-sdl-patches).
+- **`maximize`** *(bool, `false`)* — start the window maximized. Documented as SDL2/Windows-SDL1-only; use fullscreen instead for TTF output. → not yet covered in depth.
+
+---
+
+*This appendix will be extended as later chapters introduce further settings — expect substantial growth once Part III (Devices) and @chapter(timing-and-cycle-management) (Timing and Cycle Management) are written.*

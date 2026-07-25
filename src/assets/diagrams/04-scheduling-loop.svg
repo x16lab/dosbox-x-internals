@@ -1,0 +1,96 @@
+<svg viewBox="0 0 1020 630" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>The scheduling loop: Event Queue, Scheduler, CPU</title>
+<desc>PIC_RunQueue() reads the event queue's next deadline to size a batch, hands it to the CPU decoder, which runs until the batch is spent or a new, sooner event cuts it short via AddEntry().</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+}
+
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+.code { font-family: Consolas, Menlo, monospace; }
+</style>
+</defs>
+
+<text x="400" y="36" text-anchor="middle" fill="var(--fg-title)" font-size="20" font-weight="700">The scheduling loop</text>
+<text x="400" y="62" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13">Three actors, one repeating conversation, every guest millisecond.</text>
+
+<!-- Node 1: Event Queue (indigo) -->
+<rect x="180" y="96" width="440" height="110" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="204" y="122" fill="var(--indigo-label)" font-size="15" font-weight="700">Event Queue</text>
+<text x="204" y="144" class="code" fill="var(--indigo-code)" font-size="13">pic_queue — sorted by deadline (index)</text>
+<text x="204" y="164" fill="var(--indigo-note)" font-size="12">fractional-ms deadlines (pic_tickindex_t)</text>
+<text x="204" y="182" fill="var(--indigo-note)" font-size="12">PIC_AddEvent() → AddEntry() inserts (pic.cpp:623-664)</text>
+
+<line x1="400" y1="206" x2="400" y2="244" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="228" text-anchor="start" fill="var(--arrow)" font-size="13" font-style="italic">"what happens next, and when?"</text>
+
+<!-- Node 2: Scheduler (indigo) -->
+<rect x="180" y="244" width="440" height="100" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="204" y="270" fill="var(--indigo-label)" font-size="15" font-weight="700">Scheduler</text>
+<text x="204" y="292" class="code" fill="var(--indigo-code)" font-size="13">PIC_RunQueue()</text>
+<text x="204" y="312" fill="var(--indigo-note)" font-size="12">cycles = next_entry×CPU_CycleMax − index_nd (pic.cpp:782)</text>
+
+<line x1="400" y1="344" x2="400" y2="382" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="366" text-anchor="start" fill="var(--arrow)" font-size="13" font-style="italic">"you may run N cycles"</text>
+
+<!-- Node 3: CPU (green) -->
+<rect x="180" y="382" width="440" height="100" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+<text x="204" y="408" fill="var(--green-label)" font-size="15" font-weight="700">CPU</text>
+<text x="204" y="430" class="code" fill="var(--green-code)" font-size="13">(*cpudecoder)()</text>
+<text x="204" y="450" fill="var(--green-note)" font-size="12">while (CPU_Cycles-- &gt; 0) { … } — core_normal.cpp:164</text>
+
+<!-- Loop-back: CPU -> Scheduler -->
+<path d="M620,432 L700,432 L700,294 L620,294" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+<text x="640" y="284" text-anchor="start" fill="var(--arrow)" font-size="13" font-style="italic">"done — or a deadline arrived"</text>
+<text x="640" y="350" text-anchor="start" fill="var(--arrow)" font-size="10" font-style="italic">(sooner event → AddEntry() cuts it short, pic.cpp:646-649)</text>
+
+<!-- Footer -->
+<line x1="180" y1="522" x2="620" y2="522" stroke="var(--footer-line)"/>
+<text x="400" y="548" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">This is PIC_RunQueue() ↔ core_normal.cpp, zoomed out.</text>
+<text x="400" y="568" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">See the CPU_CycleMax lifecycle diagram for how leftover cycles get accounted afterward.</text>
+
+</svg>

@@ -1,0 +1,212 @@
+<svg viewBox="0 0 950 1500" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+    </defs>
+
+    <!-- Outer frame -->
+    <rect x="20" y="30" width="910" height="1430" rx="14" fill="none" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="475" y="64" text-anchor="middle" font-size="17" font-weight="700" fill="var(--fg-title)">increaseticks() — CYCLE AUTO-ADJUSTMENT FLOW</text>
+    <line x1="40" y1="84" x2="910" y2="84" stroke="var(--footer-line)" stroke-width="1"/>
+
+    <!-- N1: entry -->
+    <rect x="130" y="140" width="340" height="56" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="300" y="163" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--box-text)">increaseticks()</text>
+    <text x="300" y="180" text-anchor="middle" font-size="10" fill="var(--box-text)">called from main loop</text>
+    <line x1="300" y1="196" x2="300" y2="226" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N2: decision ticksLocked -->
+    <rect x="130" y="226" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="259" text-anchor="middle" font-size="12" font-weight="700" fill="var(--indigo-label)">ticksLocked? (Turbo)</text>
+    <text x="315" y="308" font-size="9.5" fill="var(--fg-subtitle)">YES</text>
+    <line x1="300" y1="282" x2="300" y2="312" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="510" y="248" text-anchor="middle" font-size="9.5" fill="var(--fg-subtitle)">NO</text>
+    <line x1="470" y1="254" x2="550" y2="254" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- L1: turbo reset -->
+    <rect x="550" y="226" width="260" height="56" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="680" y="242" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--box-text)">ticksLast=GetTicks()</text>
+    <text x="680" y="255" text-anchor="middle" font-size="9.5" fill="var(--box-text)">force ticksRemain=5,</text>
+    <text x="680" y="268" text-anchor="middle" font-size="9.5" fill="var(--box-text)">reset accumulators, Return</text>
+
+    <!-- N3: ticksNew -->
+    <rect x="130" y="312" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="335" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--indigo-code)">ticksNew = GetTicks()</text>
+    <text x="300" y="352" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10" fill="var(--indigo-note)">ticksScheduled += ticksAdded</text>
+    <line x1="300" y1="368" x2="300" y2="398" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N4: decision ticksNew>ticksLast -->
+    <rect x="130" y="398" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="431" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="12" font-weight="700" fill="var(--indigo-label)">ticksNew &gt; ticksLast?</text>
+    <text x="315" y="480" font-size="9.5" fill="var(--fg-subtitle)">YES</text>
+    <line x1="300" y1="454" x2="300" y2="484" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="510" y="420" text-anchor="middle" font-size="9.5" fill="var(--fg-subtitle)">NO</text>
+    <line x1="470" y1="426" x2="550" y2="426" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- L2: wrap_delay -->
+    <rect x="550" y="398" width="260" height="56" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="680" y="422" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--orange-code)">wrap_delay(1)</text>
+    <text x="680" y="440" text-anchor="middle" font-size="9.5" fill="var(--orange-code)">SDL_Delay 1ms, ticksAdded=0</text>
+
+    <!-- N5: ticksRemain -->
+    <rect x="130" y="484" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="518" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--indigo-code)">ticksRemain = ticksNew − ticksLast</text>
+    <line x1="300" y1="540" x2="300" y2="570" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N6: scale by emulator_speed -->
+    <rect x="130" y="570" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="604" text-anchor="middle" font-size="11" fill="var(--indigo-note)">scale by emulator_speed (if ≠ 100)</text>
+    <line x1="300" y1="626" x2="300" y2="656" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N7: ticksLast/ticksDone -->
+    <rect x="130" y="656" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="679" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" fill="var(--indigo-code)">ticksLast = ticksNew</text>
+    <text x="300" y="696" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10" fill="var(--indigo-note)">ticksDone += ticksRemain (post-scaling)</text>
+    <line x1="300" y1="712" x2="300" y2="742" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N8: clamp ticksRemain -->
+    <rect x="130" y="742" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="765" text-anchor="middle" font-size="11" fill="var(--indigo-note)">clamp ticksRemain to ≤ 20</text>
+    <text x="300" y="782" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10" fill="var(--indigo-note)">ticksAdded = ticksRemain (used next call)</text>
+    <line x1="300" y1="798" x2="300" y2="828" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N9: decision CPU_CycleAutoAdjust -->
+    <rect x="130" y="828" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="861" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11.5" font-weight="700" fill="var(--indigo-label)">CPU_CycleAutoAdjust?</text>
+    <text x="315" y="910" font-size="9.5" fill="var(--fg-subtitle)">YES</text>
+    <line x1="300" y1="884" x2="300" y2="914" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="510" y="850" text-anchor="middle" font-size="9.5" fill="var(--fg-subtitle)">NO</text>
+    <line x1="470" y1="856" x2="550" y2="856" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- L3 -->
+    <rect x="550" y="828" width="260" height="56" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="680" y="861" text-anchor="middle" font-size="11" fill="var(--box-text)">Return (no changes)</text>
+
+    <!-- N10: decision windows -->
+    <rect x="130" y="914" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="938" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--indigo-label)">ticksScheduled≥250 OR ticksDone≥250 OR</text>
+    <text x="300" y="954" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--indigo-label)">(ticksAdded&gt;15 AND ticksScheduled≥5)</text>
+    <text x="315" y="996" font-size="9.5" fill="var(--fg-subtitle)">YES</text>
+    <line x1="300" y1="970" x2="300" y2="1000" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="510" y="936" text-anchor="middle" font-size="9.5" fill="var(--fg-subtitle)">NO</text>
+    <line x1="470" y1="942" x2="550" y2="942" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- L4 -->
+    <rect x="550" y="914" width="260" height="56" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="680" y="947" text-anchor="middle" font-size="10.5" fill="var(--box-text)">Return (wait for window)</text>
+
+    <!-- N11: compute ratio -->
+    <rect x="130" y="1000" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="1023" text-anchor="middle" font-size="11" fill="var(--indigo-note)">Compute ratio =</text>
+    <text x="300" y="1040" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="10.5" fill="var(--indigo-code)">(ticksScheduled × target) / ticksDone</text>
+    <line x1="300" y1="1056" x2="300" y2="1086" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- N12: decision ratio>10 -->
+    <rect x="130" y="1086" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="1119" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="12" font-weight="700" fill="var(--indigo-label)">ratio &gt; 10?</text>
+    <text x="315" y="1168" font-size="9.5" fill="var(--fg-subtitle)">YES</text>
+    <line x1="300" y1="1142" x2="300" y2="1172" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="510" y="1108" text-anchor="middle" font-size="9.5" fill="var(--fg-subtitle)">NO</text>
+    <line x1="470" y1="1114" x2="550" y2="1114" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- L5 -->
+    <rect x="550" y="1086" width="260" height="56" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="680" y="1119" text-anchor="middle" font-size="10.5" fill="var(--box-text)">Ignore (transient load)</text>
+
+    <!-- N13: decision ratio>120 or ticksDone<700 -->
+    <rect x="130" y="1172" width="340" height="56" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="300" y="1205" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="11" font-weight="700" fill="var(--indigo-label)">ratio &gt; 120 OR ticksDone &lt; 700?</text>
+    <text x="315" y="1254" font-size="9.5" fill="var(--fg-subtitle)">YES</text>
+    <line x1="300" y1="1228" x2="300" y2="1258" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="510" y="1194" text-anchor="middle" font-size="9.5" fill="var(--fg-subtitle)">NO</text>
+    <line x1="470" y1="1200" x2="550" y2="1200" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- L6 -->
+    <rect x="550" y="1172" width="260" height="56" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="680" y="1195" text-anchor="middle" font-size="10" fill="var(--box-text)">Don't chase moderate</text>
+    <text x="680" y="1210" text-anchor="middle" font-size="10" fill="var(--box-text)">slowdown (host load)</text>
+
+    <!-- N14: final action -->
+    <rect x="130" y="1258" width="340" height="56" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="300" y="1281" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="12" fill="var(--green-code)">CPU_CycleMax = new_cmax</text>
+    <text x="300" y="1298" text-anchor="middle" font-size="11" fill="var(--green-note)">clamped to [200, limit]</text>
+
+    <!-- Footer -->
+    <line x1="40" y1="1344" x2="910" y2="1344" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="475" y="1370" text-anchor="middle" font-size="12" font-weight="600" fill="var(--footer-text)">Every early exit above still lets increaseticks() return — only the final green box actually changes CPU_CycleMax</text>
+    <text x="475" y="1390" text-anchor="middle" font-size="11" fill="var(--footer-subtext)">ticksAdded, set at the very end of one call, is what ticksScheduled += consumes at the top of the next call</text>
+
+    <text x="475" y="1414" text-anchor="middle" font-size="10.5" font-style="italic" fill="var(--orange-footnote)">simplified here: DOSBox-X's actual ratio computation also subtracts out I/O-delay cycles (CPU_IODelayRemoved) first,</text>
+    <text x="475" y="1430" text-anchor="middle" font-size="10.5" font-style="italic" fill="var(--orange-footnote)">and separately special-cases extreme ratios and a hard 2,000,000-cycle ceiling not shown above</text>
+</svg>

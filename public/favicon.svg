@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- CRT bezel background -->
+  <rect x="0" y="0" width="32" height="32" rx="6" fill="#0a0d0a"/>
+  <!-- subtle inner screen edge -->
+  <rect x="1.5" y="1.5" width="29" height="29" rx="5" fill="none" stroke="#1c2a1c" stroke-width="1"/>
+  <!-- phosphor-green prompt chevron ">" -->
+  <polyline points="9,8 19,16 9,24"
+            fill="none"
+            stroke="#33ff33"
+            stroke-width="4.2"
+            stroke-linecap="square"
+            stroke-linejoin="miter"/>
+  <!-- blinking cursor block "_" -->
+  <rect x="21" y="20.5" width="6.5" height="4.2" fill="#33ff33"/>
+</svg>

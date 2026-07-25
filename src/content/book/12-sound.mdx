@@ -1,0 +1,321 @@
+---
+title: "Sound"
+description: "How DOSBox-X models Sound Blaster DSP command processing (Direct DAC vs DMA-driven playback, and the pre-scheduled interrupt timing that stands in for real terminal-count signaling), the sbtype= hardware-generation lineage from sb1.0 through sb16, OPL FM synthesis as a separate chip on the same card, Gravis UltraSound wavetable synthesis with fixed-point interpolation and its voice-count/sample-rate tradeoff, and the MIDI abstraction spanning host passthrough (ALSA/OSS/Win32/CoreMIDI) and software synthesis (MT-32 emulation, FluidSynth)."
+order: 12
+chapterSlug: "sound"
+part: "devices"
+---
+
+import Diagram from '../../components/Diagram.astro';
+
+# Chapter 12 — Sound {#chapter-12-sound}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 12.1 One Card, Several Instruments {#one-card-several-instruments}
+
+DOS-era "sound cards" were rarely one device. A genuine Sound Blaster carried a DSP for playing back digitized audio, and — sharing the same card, at nearby I/O addresses — an OPL FM synthesis chip for music, entirely independent of the DSP and usable even if a program never touched digitized sound at all. The Gravis UltraSound took a completely different approach to music, forgoing FM synthesis for onboard wavetable playback. And MIDI, DOS's third major sound path, wasn't really "hardware" in the same sense at all — it was a protocol a program could send down several entirely different paths, from a real external synthesizer to a piece of software pretending to be one.
+
+This chapter traces how DOSBox-X implements each of these paths — the DSP's sample playback, the OPL chips' FM synthesis, the GUS's wavetable interpolation, and MIDI's many possible destinations — and why they remain as separate in the source code as they were on real hardware.
+
+## 12.2 Understanding DOS Audio: Playback, Synthesis, and MIDI {#understanding-dos-audio-playback-synthesis-and-midi}
+
+Before we begin tracing mixer callbacks, DSP commands, and MIDI event routing through the DOSBox-X source tree, it is worth spending a few minutes revisiting what "sound support" actually meant on a DOS machine.
+
+Modern operating systems tend to present audio as a single abstraction. An application submits samples to the operating system, and the operating system takes responsibility for everything else. The DOS era was considerably less unified.
+
+### Sound Is Just Numbers Moving at the Right Time {#sound-is-just-numbers-moving-at-the-right-time}
+
+A computer does not store or transmit "sound." It stores **samples** — measurements of waveform amplitude taken at regular intervals. When a digitized recording is played back, those stored numbers are delivered one by one to a Digital-to-Analog Converter (DAC), which reconstructs a voltage that, when fed to a speaker, produces the original sound.
+
+```
+Memory → DSP → DAC → Speaker
+```
+
+The quality of the result depends on two properties: **sample rate** (how many measurements are taken per second, measured in Hertz) and **sample depth** (how precisely each measurement is stored, measured in bits). An 8-bit sample at 11 kHz sounds thin and noisy by modern standards, but it was good enough for spoken dialog and explosions in the early 1990s.
+
+The Sound Blaster's DSP (Digital Signal Processor) exists primarily to move those samples from system memory to its onboard DAC at a controlled rate. The DSP is not a general-purpose audio processor in the modern sense — it is a command-driven I/O controller whose job, in its most common mode, is "read bytes from a DMA channel, feed them to the DAC, and signal when the transfer is done." Understanding this narrow role is essential before looking at how DOSBox-X models it: the DSP moves bytes to a converter, not musical notes.
+
+### Three Pillars of DOS Audio {#three-pillars-of-dos-audio}
+
+DOS audio rested on two methods of producing sound and one protocol for directing it. Every sound card or music device a DOS game might target fell into one of these roles, and understanding which is which — generation versus control — matters before looking at the source code:
+
+**1. Sample playback.** Digitized recordings replayed on demand. The computer already has the waveform data (stored as a VOC, WAV, or raw sample file), and its job is simply to send those numbers to a DAC at the correct rate. This was used for speech, explosions, ambient effects — anything that could be recorded in advance and played back verbatim. The Sound Blaster DSP in its DMA-driven modes is the archetypal example. Sample playback does not generate new sound; it reproduces sound that was captured somewhere else.
+
+**2. Synthesis.** The hardware creates sound algorithmically from a mathematical model, with no pre-recorded waveform data stored on disk. The most widespread example in DOS hardware was **FM synthesis**, implemented in the Yamaha OPL2 and OPL3 chips found on AdLib and Sound Blaster cards. An FM synthesizer uses a small number of simple oscillators (operators) that modulate each other's frequency to produce complex, evolving timbres — brass, reeds, organ-like tones — entirely from parameters describing how the operators interact. The OPL chip's output is computed in real time rather than read from storage, which is why the same FM parameters sound identical across cards but noticeably different from a recording of a real instrument. A different synthesis approach, **wavetable synthesis**, was used by the Gravis UltraSound: pre-recorded samples of real instruments are stored in onboard RAM and then pitch-shifted during playback to produce different notes. Despite the name "wavetable," this is still synthesis — the hardware is generating each note by transforming stored reference waveforms, not playing back a complete pre-mixed recording.
+
+**3. MIDI — a control protocol, not a sound format.** Musical Instrument Digital Interface is not an audio format at all. Unlike sample playback and synthesis, MIDI does not generate audio directly. It contains musical **events**: "note on, pitch C4, velocity 90," "pitch bend," "program change." The device receiving a MIDI stream is responsible for turning those instructions into actual sound, and different receiving devices produce radically different results — the same MIDI sequence played through an AdLib FM synthesizer sounds entirely unlike the same data played through a Roland MT-32. This delegation — instruction versus generation — is why DOSBox-X has entirely separate code paths for MIDI routing and for DSP/OPL/GUS emulation, and why a single game could output sound effects through a Sound Blaster DSP while sending its music through a completely different MIDI path.
+
+### Why DOS Games Had Separate Music and Sound Effects Settings {#why-dos-games-had-separate-music-and-sound-effects-settings}
+
+With the three approaches above in mind, the classic DOS setup screen makes immediate sense:
+
+> Select digital sound device:
+>
+> * Sound Blaster
+> * Sound Blaster Pro
+> * PC Speaker
+>
+> Select music device:
+>
+> * AdLib
+> * Sound Blaster FM
+> * Roland MT-32
+> * General MIDI
+
+A player was not choosing between overlapping alternatives. They were choosing two complementary devices that served different purposes: one device for digitized samples (explosions, speech, weapon sounds) and a separate device for music. The digital path handled sound effects through sample playback; the music path handled the soundtrack through synthesis or MIDI. It was perfectly normal — in fact, it was the recommended configuration — to pair a Sound Blaster for effects with a Roland MT-32 for music, and many DOS games shipped setup programs that explicitly anticipated this combination.
+
+This was not a workaround or a legacy constraint. It was the architectural assumption of DOS audio: digital effects and music were independent subsystems that happened to share a speaker, and a developer could dispatch each to whichever device the player owned without needing a unified audio pipeline.
+
+A DOS game splitting its audio across two independent paths looks like this — and the emulator's internal architecture mirrors the same structure:
+
+```
+          DOS Game
+         /        \
+        /          \
+Sound Effects      Music
+      |               |
+Sound Blaster     AdLib / MIDI /
+    DSP            Roland / GUS
+      |               |
+      +-------+-------+
+              |
+              v
+     Host audio mixer
+```
+
+### DMA: Keeping the CPU Away from the Audio Stream {#dma-keeping-the-cpu-away-from-the-audio-stream}
+
+The simplest way to play a digitized sample on a Sound Blaster is the DSP's **Direct DAC** command (0x10): the CPU writes each sample to an I/O port in a tight loop, and the DSP forwards each byte to the DAC. This works, but it consumes the CPU entirely — while a game plays back speech or a sound effect this way, nothing else can happen. For a brief explosion this is acceptable; for continuous playback it is not.
+
+DMA solves this. @chapter(dma-and-pit) described how the 8237 DMA controller can transfer data between memory and a peripheral without CPU intervention. The Sound Blaster is one of the most important real-world users of that mechanism:
+
+```
+Memory → DMA Controller → Sound Blaster DSP → DAC
+```
+
+A game sets up a DMA channel with the address and length of the sample data, tells the DSP to start an auto-init DMA transfer (command 0x1C), and then walks away. The DMA controller feeds sample bytes to the DSP at a rate paced by the DSP's own clock; the DSP converts them to analog; and when the transfer completes, the DSP raises an interrupt to tell the software that the buffer needs attention. The CPU is free to render the next frame, run game logic, or do anything else while audio plays in the background.
+
+The interrupt is essential: without it, the software would have to guess when the DMA transfer finished. The DSP generates an interrupt at the end of a block transfer, and DOS's Sound Blaster drivers would typically respond by setting up the next block, creating a seamless chain of DMA transfers that could sustain continuous playback indefinitely. DOSBox-X's `DSP_DMA_CallBack` function reacts to two of those DMA events — mask and unmask — to keep emulated playback correctly paused and resumed in step with the guest's own DMA-channel state. Terminal count, worth noting precisely, is *not* one of them: `DSP_DMA_CallBack` explicitly ignores it —
+
+```cpp
+if (chan!=sb[ci].dma.chan || event==DMA_REACHED_TC) return;
+```
+
+— which means the "buffer finished, raise an interrupt" moment this paragraph just described isn't driven by the DMA channel telling the Sound Blaster it's done at all. It's scheduled independently, ahead of time, the moment playback starts: DOSBox-X computes how long the requested transfer *should* take from the sample rate and buffer length, and hands that duration to @chapter(main-loop-and-event-scheduler)'s scheduler directly —
+
+```cpp
+PIC_AddEvent(END_DMA_Event,delay,dma.left | (card_index << CARD_INDEX_BIT));
+```
+
+— with `END_DMA_Event` eventually reaching `SB_RaiseIRQ()` and `PIC_ActivateIRQ()` once that pre-computed delay elapses. This is a subtly different, and in a sense more elegant, design than "wait for a hardware signal": rather than treating DMA terminal count as the authoritative source of "when is the buffer done," DOSBox-X predicts the answer the moment a transfer begins and lets @chapter(main-loop-and-event-scheduler)'s scheduler simply wake it up at the right moment — one more example of that scheduler standing in for a dedicated hardware timer that a real Sound Blaster needed and DOSBox-X doesn't.
+
+---
+
+That is the hardware picture: two sound-generation methods — sample playback and synthesis — plus a control protocol, MIDI, that could direct either one. All three were connected through a setup convention that treated digital effects and music as separate concerns, and bridged by DMA where continuous playback demanded it. The rest of this chapter traces how each became concrete hardware, starting with the device that brought all of them into the same PC ecosystem.
+
+## 12.3 The Compatibility That Won the DOS Wars {#the-compatibility-that-won-the-dos-wars}
+The three pillars of DOS audio did not enter the market at the same time or with equal influence. Before the Sound Blaster, a PC owner might have no audio beyond the built-in speaker, or at most an AdLib card providing FM synthesis without any way to play digitized samples. Creative Labs changed this by shipping a card that combined an OPL2 synthesizer with a DSP for sample playback on the same PCB — and then made it compatible with the AdLib software ecosystem that already existed. That decision reshaped DOS audio, and the original Sound Blaster's greatest innovation was arguably not its ability to play digitized sound at all — it was its willingness to imitate existing hardware.
+
+Developers who had already invested in AdLib support discovered that their games could run on Sound Blaster systems without modification, while gaining access to digitized speech and sound effects when additional support was added. This compatibility proved extraordinarily influential: by the middle of the 1990s, "Sound Blaster compatible" had become an expectation rather than a marketing feature, and setup programs containing pages of IRQ, DMA, and music-device selections had become a familiar part of PC gaming.
+
+DOSBox-X still carries the legacy of that decision today — not just conceptually, but as a literal menu of choices in `dosbox-x.conf`. The `sbtype=` setting doesn't select "a Sound Blaster"; it selects a specific point in that whole compatibility lineage, and DOSBox-X's own source spells the lineage out explicitly:
+
+```cpp
+const char * sbtype=config->Get_string("sbtype");
+...
+else if (!strcasecmp(sbtype,"sb1.0")) { type=SBT_1; sb[ci].subtype=SBST_100; }
+else if (!strcasecmp(sbtype,"sb1.5")) { type=SBT_1; sb[ci].subtype=SBST_105; }
+else if (!strcasecmp(sbtype,"sb2.0")) { type=SBT_2; sb[ci].subtype=SBST_200; }
+else if (!strcasecmp(sbtype,"sb2.01")) { type=SBT_2; sb[ci].subtype=SBST_201; }
+else if (!strcasecmp(sbtype,"sbpro1")) type=SBT_PRO1;
+else if (!strcasecmp(sbtype,"sbpro2")) type=SBT_PRO2;
+else if (!strcasecmp(sbtype,"sb16")) type=SBT_16;
+else if (!strcasecmp(sbtype,"gb")) type=SBT_GB;
+...
+else if (!strcasecmp(sbtype,"ess688")) {
+    type=SBT_PRO2;
+    sb[ci].ess_type=ESS_688;
+    LOG(LOG_SB,LOG_WARN)("ESS 688 emulation is EXPERIMENTAL at this time and should not yet be used for normal gaming");
+}
+```
+
+Six genuine Creative Labs hardware generations (`sb1.0` through `sb16`), the pre-Sound-Blaster Game Blaster (`gb`) that predates this whole story, and — worth noting on its own — third-party *compatible clones* like the ESS 688, flagged in DOSBox-X's own source as experimental rather than fully trustworthy. That last detail is quietly telling: even among cards that all advertised "Sound Blaster compatible," DOSBox-X's own maintainers don't treat that compatibility as uniform enough to promise the same fidelity for a clone chipset as for the genuine article. The single word "compatible" that won the DOS audio market was never actually one guarantee — it was a spectrum, and `sbtype=` is DOSBox-X's own acknowledgment of exactly how wide that spectrum was.
+
+@section(sound/understanding-dos-audio-playback-synthesis-and-midi) introduced sample playback as the first sound-generation method. The Sound Blaster's DSP is the hardware embodiment of that method: it is not a music synthesizer but a specialized streaming engine whose job is moving waveform data from system memory to a DAC at a controlled rate. It does not interpret notes, generate timbres, or understand music — it moves bytes. The command set that follows implements exactly that mechanism.
+
+## 12.4 The DSP: Commands, Not a Direct Line to Audio {#the-dsp-commands-not-a-direct-line-to-audio}
+
+The Sound Blaster's digital sound path is controlled through its DSP (Digital Signal Processor — SB-era marketing for what's really a small command processor, not a general-purpose signal-processing chip). A program doesn't hand the DSP raw samples directly; it sends single-byte commands, some carrying follow-up parameter bytes, and `DSP_DoCommand()` (`src/hardware/sblaster.cpp`) dispatches on the command byte much the way this book has seen dispatch handled before — a `switch` keyed on an opcode-like value:
+
+```cpp
+switch (cmd) {
+    case 0x10:  /* Direct DAC */
+        ...
+    case 0x14:  /* Single Cycle 8-Bit DMA DAC */
+        ...
+    case 0x1c:  /* Auto Init 8-bit DMA */
+        ...
+    case 0x1f:  /* Auto Init 2-bit ADPCM Reference */
+        ...
+}
+```
+
+<Diagram src="dsp-command-dispatch.svg" />
+
+Two of those commands are worth contrasting directly, because they represent two entirely different ways of getting sound out of the same chip. `0x10` ("Direct DAC") is the primitive, brute-force path: the CPU hands the DSP one sample at a time, in a tight loop, and the DSP plays it — expensive in CPU time, but simple. `0x14`/`0x1C` hand the DSP a DMA channel instead, and from that point on the CPU is out of the loop entirely: this is @chapter(dma-and-pit)'s DMA mechanism, put to its most common real-world use. Sound Blaster support claims a channel exactly the way any DMA-using device does:
+
+```cpp
+dma.chan=GetDMAChannel(hw.dma8);
+...
+dma.chan->Register_Callback(DSP_DMA_CallBack);
+```
+
+and the resulting callback doesn't just move bytes — it reacts to the guest's own DMA-channel state changes in ways that directly affect what a person actually hears:
+
+```cpp
+static void DSP_DMA_CallBack(DmaChannel * chan, DMAEvent event) {
+    ...
+    if (event==DMA_MASKED) {
+        if (sb[ci].mode==MODE_DMA) {
+            // Catch up to current time, but don't generate an IRQ!
+            // Fixes problems with later sci games.
+            ...
+            sb[ci].mode = MODE_DMA_MASKED;
+        }
+    } else if (event==DMA_UNMASKED) {
+        if (sb[ci].mode==MODE_DMA_MASKED && sb[ci].dma.mode!=DSP_DMA_NONE) {
+            sb[ci].DSP_ChangeMode(MODE_DMA);
+            sb[ci].CheckDMAEnd();
+        }
+    }
+}
+```
+
+If a guest program masks the DMA channel mid-playback — deliberately pausing the transfer, something real DOS software genuinely did, sometimes to free the bus for another operation — Sound Blaster playback has to pause with it, and resume cleanly when the channel is unmasked again, without spuriously firing an interrupt the guest wasn't expecting. This is @chapter(dma-and-pit)'s abstract `DMAEvent` enum doing concrete, audible work: `DMA_MASKED` and `DMA_UNMASKED` aren't just bookkeeping signals here, they're the difference between sound that stutters correctly, in sync with what the guest asked for, and sound that just plays through regardless of what the guest's DMA state actually says.
+
+The DSP's reset sequence is worth a brief look too, because it reaches back to a different earlier chapter. A real Sound Blaster's reset handshake takes a small but non-zero amount of real time — the DSP needs a moment to actually come back up — and DOSBox-X models that delay honestly rather than completing the reset instantly:
+
+```cpp
+void SB_INFO::DSP_DoReset(uint8_t val) {
+    if (((val&1)!=0) && (dsp.state!=DSP_S_RESET)) {
+        DSP_Reset();
+        dsp.state=DSP_S_RESET;
+    } else if (((val&1)==0) && (dsp.state==DSP_S_RESET)) {
+        dsp.state=DSP_S_RESET_WAIT;
+        PIC_AddEvent(DSP_FinishReset,20.0f/1000.0f,(card_index << CARD_INDEX_BIT));  // 20 microseconds
+    }
+}
+```
+
+`PIC_AddEvent` is @chapter(main-loop-and-event-scheduler)'s scheduler — the exact same event-queue mechanism that schedules VGA retrace and PIT ticks is what tells the DSP, 20 microseconds of emulated time later, that it's finished resetting. A program that polls the DSP too eagerly after triggering a reset, before that scheduled event fires, would see the DSP still reporting as not-yet-ready — exactly as it would on real hardware, and exactly because DOSBox-X routes even a sound chip's internal timing through the same central clock this book has been tracing since @chapter(main-loop-and-event-scheduler).
+
+## 12.5 FM Synthesis: A Second Chip Sharing the Same Card {#fm-synthesis-a-second-chip-sharing-the-same-card}
+
+Sample playback handles sounds that already exist — explosions, speech, weapon effects. A game's music, however, requires a fundamentally different approach. Before CD-ROMs made pre-recorded audio tracks practical, a soundtrack had to be generated in real time from musical data, and it had to respond to changing game state rather than playing back a fixed recording. The Yamaha OPL-series FM synthesis chips became the answer, and their distinctive sound — brass leads, reedy pads, percussion synthesized from pure oscillator math — defined the audio identity of PC gaming through the late 1980s and early 1990s.
+
+Every command byte discussed so far belongs to the DSP, and the DSP has nothing to do with music in the traditional sense — it plays back whatever digitized samples a program hands it. A genuine Sound Blaster's music capability came from a second, entirely separate chip on the same card: an OPL FM synthesizer, addressed at I/O ports offset from the card's base address rather than sharing the DSP's own ports:
+
+```cpp
+WriteHandler[0].Install(sb_addr+0xC800,OPL_Write,IO_MB, 1 );
+...
+WriteHandler[4].Install(sb_addr+0x2000,OPL_Write,IO_MB, 1 );
+```
+
+This confirms something worth stating plainly: a Sound Blaster wasn't one device with two capabilities, it was two devices sharing a card and a base address, exactly the way @chapter(vga-emulation) found VGA to be several distinct register blocks sharing one video card. `OPL_Write()` (`src/hardware/adlib.cpp`) implements frequency-modulation synthesis — building complex timbres by having simple oscillators modulate each other's frequency — a fundamentally different technique from anything else in this chapter, closer in spirit to a small synthesizer chip than to anything sample-based. This book won't go deeper into FM synthesis's own internals here, since it's a large enough topic to deserve its own treatment rather than a subsection of a chapter also covering DSP commands, wavetable synthesis, and MIDI — but its presence is worth flagging precisely because it's easy to think of "Sound Blaster" as a single digitized-audio device when a real one was always this pair of chips at once.
+
+## 12.6 The Gravis UltraSound: Wavetable Synthesis, and Its Own Onboard Memory {#the-gravis-ultrasound-wavetable-synthesis-and-its-own-onboard-memory}
+
+Not everyone was satisfied with FM synthesis. To musicians and demo-scene programmers, the OPL's mathematically generated timbres sounded artificial compared to the sample-based synthesizers used in professional music equipment. The Gravis UltraSound, released in 1992, pursued a different philosophy: instead of generating tones from oscillator math, it stored real instrument recordings in its own onboard RAM and played them back at different pitches — wavetable synthesis — at a time when no other PC sound card could do this. This approach appealed strongly to musicians and demoscene enthusiasts, though it never achieved the universal game compatibility of the Sound Blaster.
+
+By this point, two sound-generation methods should be clearly visible in the source code: the DSP replays stored samples through a command-driven I/O path (@section(sound/the-dsp-commands-not-a-direct-line-to-audio)), and the OPL generates tones mathematically through FM synthesis (@section(sound/fm-synthesis-a-second-chip-sharing-the-same-card)). The Gravis UltraSound represents wavetable synthesis — the other branch of the synthesis method — and it works differently from both the sample-playback and FM paths.
+
+Where the OPL chip synthesizes tones algorithmically, the Gravis UltraSound takes a different approach: it plays back pre-recorded sample waveforms, pitch-shifted in real time to produce different notes — **wavetable synthesis** — and it does this across up to 32 independent hardware voices:
+
+```cpp
+static GUSChannel *guschan[32] = {NULL};
+```
+
+Crucially, those samples don't live in the same memory this book's earlier chapters have been describing. The GUS carried its own dedicated onboard RAM — up to 1 MB on period cards — loaded by the guest via, once again, @chapter(dma-and-pit)'s DMA mechanism:
+
+```cpp
+GetDMAChannel(myGUS.dma1)->Register_Callback(GUS_DMA_Callback);
+```
+
+Once samples are loaded into that onboard `GUSRam`, playing a note means reading through them at whatever rate produces the desired pitch — and because a voice's actual playback rate rarely lines up with the sample data's original recorded rate, the GUS needs to synthesize the samples *between* the ones actually stored. DOSBox-X's `GUSChannel` class implements this with a fixed-point position accumulator and linear interpolation between neighboring stored samples:
+
+```cpp
+INLINE int32_t InterpolateSample(const int32_t w1,const int32_t w2,const uint32_t scale) const {
+    return w1 + (((w2 - w1) * int32_t(scale)) >> WAVE_FRACT);
+}
+
+INLINE int32_t GetSample16(const uint32_t WaveAddr) const {
+    const uint32_t useAddr = WaveAddr >> WAVE_FRACT;
+    return InterpolateSample(LoadSample16(useAddr),LoadSample16(useAddr+1u),WaveAddr & WAVE_FRACT_MASK);
+}
+```
+
+`WaveAddr` carries both an integer part (which two stored samples currently bracket the voice's playback position) and a fractional part (`WAVE_FRACT` bits, `WAVE_FRACT_MASK` extracting them) — that fractional part is exactly the blend weight `InterpolateSample` uses to compute a value partway between the two real stored samples. Advance `WaveAddr` slowly and a voice plays back near its original recorded pitch; advance it quickly and the same stored waveform plays back higher, with the interpolation smoothing over the fact that the accumulator is landing between actual sample positions rather than exactly on one every step. This is the entire technique "wavetable synthesis" names, made concrete: a small library of real recorded waveforms, re-read at variable speed to produce a full range of pitches, rather than any tone being synthesized from first principles the way the OPL chip's oscillators do.
+
+The "up to 32 voices" figure earlier in this section undersells a real tradeoff period GUS owners had to configure directly, and DOSBox-X models the exact same constraint rather than treating 32 as a free number. The GUS's total sample-generation throughput was fixed — more simultaneously active voices meant *less* throughput budget per voice, expressed here as an inverse relationship between `ActiveChannels` and the resulting base sample rate:
+
+```cpp
+myGUS.basefreq = (uint32_t)((float)1000000/(1.619695497*(float)(myGUS.ActiveChannels)));
+```
+
+Configure fewer active channels and each one gets a proportionally higher sample rate — better fidelity per voice, at the cost of fewer simultaneous notes; configure closer to the full 32 and per-voice fidelity drops correspondingly. This wasn't a software preference DOSBox-X invented — it's the literal formula real GUS hardware used to divide one shared rate budget across however many voices a piece of music-tracking software asked for, and a demo-scene composer choosing "16 channels" over "32" on real 1992 hardware was making exactly this quality-versus-polyphony tradeoff on purpose.
+
+It's worth noticing what GUS and Sound Blaster's DMA-driven playback share, even though one plays back music and the other plays back arbitrary digitized audio: both ultimately rely on the identical `DmaChannel`/`Register_Callback` mechanism @chapter(dma-and-pit) covered once, generically. Neither sound card needed its own bespoke bulk-data-transfer mechanism — both simply became devices on the same 8237 bus @chapter(dma-and-pit) already explained, which is exactly the payoff a well-designed piece of shared infrastructure is supposed to provide.
+
+## 12.7 MIDI: One Interface, Several Genuinely Different Destinations {#midi-one-interface-several-genuinely-different-destinations}
+
+The DSP, OPL, and GUS all share a property that might not be obvious after examining them in isolation: each is a sound-generation path. A program sends them data — samples, FM parameters, wavetable positions — and they produce audio directly. MIDI breaks this model entirely. MIDI is not a hardware device; it is a communication protocol. Its messages contain no audio data whatsoever — only musical events ("start playing note C4 on channel 1," "change to program 5") and control information ("pitch bend," "sustain pedal"). The device or software that receives those events is what actually produces the sound.
+
+This distinction — an instruction protocol versus a generation path — is why MIDI requires an entirely separate abstraction in DOSBox-X, one that has nothing to do with DMA channels, DACs, or sample interpolation. It is also why MIDI is where this chapter's opening claim — DOSBox-X keeps hardware's real multiplicity rather than collapsing it — shows up most starkly, because MIDI in DOS software was never one thing. A program emitting MIDI data doesn't know or care whether those bytes end up driving a real external synthesizer, a software emulation of a specific hardware synth, or a general-purpose softsynth reading a soundfont. DOSBox-X's `MidiHandler` (`include/midi.h`) is the abstraction that lets all of those destinations sit behind one interface:
+
+```cpp
+class MidiHandler {
+public:
+    virtual bool Open(const char * /*conf*/) { return true; };
+    virtual void Close(void) {};
+    virtual void PlayMsg(uint8_t * /*msg*/) {};
+    virtual void PlaySysex(uint8_t * /*sysex*/,Bitu /*len*/) {};
+    virtual const char * GetName(void) { return "none"; };
+    virtual void ListAll(Program * /*base*/) {};
+    MidiHandler * next;
+};
+```
+
+That `next` pointer chains registered handlers into a linked list — a lighter-weight version of the same "family of interchangeable implementations behind one shared interface" pattern this book has now met three times: `SCREEN_TYPES`' presentation backends in `src/output/` (@chapter(host-abstraction-sdl)), VGA's near-twenty `PageHandler` subclasses (@chapter(vga-emulation)), and now this. What differs between MIDI's implementations is unusually wide even by this book's standards, spanning a genuine hardware-versus-software divide:
+
+```text
+src/gui/midi_alsa.h        - passthrough to a real ALSA MIDI device (Linux)
+src/gui/midi_oss.h         - passthrough to OSS (Linux/BSD)
+src/gui/midi_win32.h       - passthrough to a Windows MIDI device
+src/gui/midi_coremidi.h    - passthrough to CoreMIDI (macOS)
+src/gui/midi_coreaudio.h   - passthrough via CoreAudio (macOS)
+src/gui/midi_mt32.h        - software emulation of a specific hardware synth (MT-32)
+src/gui/midi_synth.h       - general-purpose software synthesis (includes FluidSynth)
+src/gui/midi_timidity.h    - passthrough to a TiMidity++ server
+```
+
+The first group — `alsa`, `oss`, `win32`, `coremidi` — is genuine **passthrough**: DOSBox-X forwards MIDI bytes essentially unmodified to whatever the host operating system considers a MIDI output device, and whatever produces the actual sound (a real piece of hardware, or the host OS's own software synth) is entirely outside DOSBox-X's control or concern. The second group — `mt32`, `synth`/`fluidsynth` — is **software synthesis**: DOSBox-X itself, or a library it links against, turns MIDI messages into audio samples directly, with no host MIDI service involved at all. `midi_mt32.h` deserves a specific note: it's not a general-purpose synthesizer, it's an emulation of one *particular* piece of hardware, Roland's MT-32 — meaning DOSBox-X's software synthesis path, for this one specific backend, is itself doing exactly the kind of hardware-faithful emulation the rest of this book has been describing, just for a sound module instead of a PC.
+
+That split — passthrough versus software synthesis — maps onto a real, historically meaningful distinction, not an arbitrary implementation choice. A DOS game targeting "General MIDI" or specifically an MT-32 was written assuming a particular external synthesizer's actual sound, timbre by timbre; a passthrough handler reproduces that faithfully only if the real device (or the host's own emulation of one) is actually present, while a software synthesis handler has to get the *sound itself* right, in software, with nothing external to fall back on. `MidiHandler`'s minimal shared interface — four virtual methods — is exactly narrow enough to not need to know which of those two very different jobs a given implementation is doing underneath it.
+
+## 12.8 DOOM's Music Was Written on a Roland {#doom-s-music-was-written-on-a-roland}
+You May Never Have Heard DOOM's Music As Intended. Much of Bobby Prince's music for DOOM was composed with Roland MIDI hardware in mind. Players with only AdLib or Sound Blaster FM synthesis heard a mathematical approximation of those compositions, while owners of an MT-32 or SC-55 experienced something much closer to the original intent.
+
+DOSBox-X's MIDI support preserves that distinction. The same MIDI file can sound radically different depending on which synthesizer ultimately interprets it—a reminder that, in the DOS era, software often shipped without a definitive soundtrack.
+
+## 12.9 What Carries Forward {#what-carries-forward}
+
+Sound demonstrates the cost of collapsing differences more plainly than any earlier chapter. A VGA register either produces the correct pixel or it does not; a DMA transfer either completes or it does not. Audio is the first subsystem where modeling a chip approximately rather than faithfully produces a result a person can hear — and the difference is not academic. The metallic FM soundtrack of Duke Nukem 3D, rendered through a faithfully emulated OPL2, should sound indistinguishable from a recording of real hardware. The interpolation artifacts of a Gravis UltraSound should arrive at the host audio buffer with the same fixed-point precision the real chip used. A MIDI sequence written for Roland's MT-32 should produce the correct timbres, not an approximation from a different synthesizer's sound set.
+
+That is why this chapter's three subjects — a DSP command processor, a wavetable synthesizer with its own onboard RAM, and a MIDI abstraction spanning real hardware and pure software — remain separate in DOSBox-X's source code. They are not three implementations of a single abstraction called "sound." They are a DSP chip, an OPL chip, a GUS card, and a protocol that never specified what the final audio should be. DOSBox-X models each on its own terms because DOS software addressed each on its own terms, and accurate emulation means preserving those differences, not hiding them.
+
+This pattern — model the specific hardware, not the category of device — is the thread running through every chapter of this book. In serial and parallel ports it reaches its simplest form yet: peripherals with none of VGA's register complexity or sound's synthesis techniques, just a byte moving one direction or another, at a rate a real UART actually enforced.
+
+---
+
+*Next: @chapter(serial-parallel-peripherals) — Serial, Parallel, and Peripheral I/O, where UART emulation, modem and null-modem support, and printer, joystick, and mouse handling round out Part III.*

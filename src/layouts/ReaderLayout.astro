@@ -1,0 +1,305 @@
+---
+import '@fontsource-variable/fraunces/opsz.css';
+import '@fontsource/public-sans/400.css';
+import '@fontsource/public-sans/500.css';
+import '@fontsource/public-sans/600.css';
+import '@fontsource/public-sans/700.css';
+import '@fontsource-variable/jetbrains-mono/wght.css';
+import '../styles/global.css';
+import '../styles/book.css';
+import { withBase } from '../lib/url';
+import { SITE, BOOK_NAV, NAV_ITEMS } from '../consts';
+import { commitHash, describeRef } from '../lib/build';
+import TocTree from '../components/book/TocTree.astro';
+import { buildTocTree } from '../lib/headings';
+import Head from '../components/Head.astro';
+import CookieConsent from '../components/book/CookieConsent.astro';
+
+interface ChapterGroup {
+  part: string | null;
+  chapters: typeof BOOK_NAV[number][];
+}
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogType?: 'website' | 'article';
+  image?: string;
+  headingsMap?: Record<string, { depth: number; slug: string; text: string }[]>;
+}
+
+const siteName = SITE.title;
+
+const {
+  title = siteName,
+  description = SITE.description,
+  ogType = 'website',
+  image,
+} = Astro.props;
+
+const siteBase = Astro.site ?? new URL(Astro.url.origin);
+const canonicalURL = new URL(Astro.url.pathname, siteBase);
+const imageURL = image ? new URL(image, siteBase) : new URL(withBase(SITE.ogImage), siteBase);
+const fullTitle = title === siteName ? title : `${title} — ${siteName}`;
+
+const currentPath = Astro.url.pathname;
+const isActive = (href: string) => {
+  const full = withBase(href);
+  return href === '/' ? currentPath === full : currentPath.startsWith(full);
+};
+
+const headingsMap = Astro.props.headingsMap ?? {};
+
+// Sort chapters by order for the TOC
+const sortedChapters = [...BOOK_NAV].sort((a, b) => a.order - b.order);
+
+const tocGroups: ChapterGroup[] = [{ part: null, chapters: sortedChapters }];
+---
+
+<!doctype html>
+<html lang="en">
+<head>
+  <Head title={fullTitle} description={description} canonicalURL={canonicalURL} imageURL={imageURL} ogType={ogType} siteName={siteName} />
+</head>
+<body>
+<header class="site-header site-header--reader">
+  <a class="brand" href={withBase('/')} aria-label={`${siteName} home`}>
+    <span class="brand-mark" aria-hidden="true"></span>
+    <span>{siteName}</span>
+  </a>
+  <nav class="site-nav" aria-label="Main navigation">
+    {
+      NAV_ITEMS.map((item) => (
+          <a href={withBase(item.href)} aria-current={isActive(item.href) ? 'page' : undefined}>
+            {item.label}
+          </a>
+      ))
+    }
+  </nav>
+  <button class="theme-toggle" type="button" aria-label="Toggle color theme" data-theme-toggle>
+    <span aria-hidden="true"></span>
+  </button>
+</header>
+
+<div class="reader-wrap">
+  <button class="toc-fab" type="button" aria-label="Toggle table of contents" data-toc-toggle>
+    <span>&#9776;</span>
+  </button>
+  <button class="toc-collapse" type="button" data-toc-collapse aria-expanded="true" aria-controls="reader-toc" aria-label="Collapse table of contents">
+    <span class="toc-collapse-icon" aria-hidden="true">&#8249;</span>
+  </button>
+  <aside class="reader-toc" id="reader-toc" aria-label="Table of contents" data-reader-toc>
+    <div class="toc-header">
+      <span class="toc-header-title">Contents</span>
+      <button class="toc-close" type="button" aria-label="Close table of contents" data-toc-close>&#x2715;</button>
+    </div>
+    <nav>
+      {
+        tocGroups.map((group) => (
+            <div class="toc-group">
+              <ul class="toc-chapters">
+                {group.chapters.map((ch) => {
+                  const tree = headingsMap[ch.slug]
+                      ? buildTocTree(headingsMap[ch.slug])
+                      : [];
+                  return (
+                      <li>
+                        <a href={withBase(`/read/#ch-${ch.slug}`)} class="toc-link" data-chapter={ch.slug}>
+                          <span class="toc-chapter-num">{ch.order}</span>
+                          {ch.title}
+                        </a>
+                        {tree.length > 0 && (
+                            <TocTree items={tree} linkClass="toc-sublink" baseHref={withBase('/read/')} chapterNum={ch.order} />
+                        )}
+                      </li>
+                  );
+                })}
+              </ul>
+            </div>
+        ))
+      }
+    </nav>
+  </aside>
+
+  <main class="reader-main">
+    <div class="reader-progress" aria-hidden="true">
+      <div class="reader-progress-bar" id="progress-bar"></div>
+      <div class="reader-progress-label" id="progress-label">
+        <span class="reader-chapter-label">Reading:</span>
+        <span class="reader-chapter-name" id="chapter-name">Introduction</span>
+      </div>
+    </div>
+
+    <div class="reader-content" id="reader-content">
+      <slot />
+    </div>
+
+    <footer class="book-footer reader-footer">
+      <p>{SITE.footerText}</p>
+      <p class="footer-meta">
+        <a href={`${SITE.repo}/commit/${commitHash}`}>{describeRef}</a>
+        · <a href={withBase('/license/')}>All Rights Reserved</a>
+        · <a href={withBase('/privacy/')}>Privacy</a>
+      </p>
+    </footer>
+  </main>
+</div>
+
+<CookieConsent />
+
+<script>
+  const syncHeaderHeight = () => {
+    const header = document.querySelector('.site-header');
+    if (!header) return;
+    const height = Math.ceil(header.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--header-h', `${height}px`);
+  };
+
+  syncHeaderHeight();
+  window.addEventListener('resize', syncHeaderHeight, { passive: true });
+  document.fonts?.ready?.then(syncHeaderHeight).catch(() => {});
+</script>
+
+<script>
+  const toggle = document.querySelector('[data-theme-toggle]');
+  toggle?.addEventListener('click', () => {
+    const current = document.documentElement.dataset.theme;
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('theme', next);
+  });
+</script>
+
+<script>
+  const tocToggle = document.querySelector('[data-toc-toggle]');
+  const readerToc = document.querySelector('[data-reader-toc]');
+  tocToggle?.addEventListener('click', () => {
+    readerToc?.classList.toggle('reader-toc-open');
+  });
+  document.querySelector('[data-toc-close]')?.addEventListener('click', () => {
+    readerToc?.classList.remove('reader-toc-open');
+  });
+  readerToc?.addEventListener('click', (e) => {
+    const target = e.target as Element | null;
+    if (target?.closest('a')) {
+      readerToc?.classList.remove('reader-toc-open');
+    }
+  });
+  document.addEventListener('click', (e) => {
+    const target = e.target as Node | null;
+    if (readerToc?.classList.contains('reader-toc-open') &&
+        !readerToc.contains(target) && target !== tocToggle && !tocToggle?.contains(target)) {
+      readerToc.classList.remove('reader-toc-open');
+    }
+  });
+
+  const tocCollapse = document.querySelector('[data-toc-collapse]');
+  const readerWrap = document.querySelector('.reader-wrap');
+  tocCollapse?.addEventListener('click', () => {
+    const collapsed = readerWrap?.classList.toggle('reader-toc-collapsed');
+    tocCollapse.setAttribute('aria-expanded', String(!collapsed));
+    tocCollapse.setAttribute('aria-label', collapsed ? 'Expand table of contents' : 'Collapse table of contents');
+  });
+
+  let touchStartX = 0;
+  document.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].screenX - touchStartX;
+    if (dx > 80 && touchStartX < 40) {
+      readerToc?.classList.add('reader-toc-open');
+    } else if (dx < -80 && readerToc?.classList.contains('reader-toc-open')) {
+      readerToc.classList.remove('reader-toc-open');
+    }
+  }, { passive: true });
+
+  const chapterSections = document.querySelectorAll('[data-chapter-id]');
+  const chapterNameEl = document.getElementById('chapter-name');
+  const progressBar = document.getElementById('progress-bar');
+  const tocLinks = document.querySelectorAll('.toc-link');
+  const tocSublinks = document.querySelectorAll('.toc-sublink');
+
+  const chapterNames: Record<string, string> = {};
+  document.querySelectorAll('[data-chapter-id]').forEach((el) => {
+    const section = el as HTMLElement;
+    chapterNames[section.dataset.chapterId ?? ''] = section.dataset.chapterTitle ?? '';
+  });
+
+  const chapterRatios = new Map();
+
+  const chapterObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          chapterRatios.set(entry.target, entry.intersectionRatio);
+        });
+
+        let visibleChapter = '';
+        let visibleRatio = 0;
+
+        chapterRatios.forEach((ratio, target) => {
+          if (ratio > visibleRatio) {
+            visibleRatio = ratio;
+            visibleChapter = (target as HTMLElement).dataset.chapterId ?? '';
+          }
+        });
+
+        if (visibleChapter && chapterNames[visibleChapter]) {
+          if (chapterNameEl) chapterNameEl.textContent = chapterNames[visibleChapter];
+
+          tocLinks.forEach((link) => {
+            (link as HTMLElement).classList.toggle('toc-active', (link as HTMLElement).dataset.chapter === visibleChapter);
+          });
+        }
+      },
+      { threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5] }
+  );
+
+  chapterSections.forEach((section) => chapterObserver.observe(section));
+
+  const sublinks: Record<string, HTMLElement> = {};
+  tocSublinks.forEach((link) => {
+    const hash = link.getAttribute('href')?.split('#')[1];
+    if (hash) sublinks[hash] = link as HTMLElement;
+  });
+
+  const headingRatios = new Map();
+
+  const headingObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          headingRatios.set(entry.target, entry.intersectionRatio);
+        });
+
+        let bestId = '';
+        let bestRatio = 0;
+        headingRatios.forEach((ratio, target) => {
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
+            bestId = target.id;
+          }
+        });
+
+        tocSublinks.forEach((l) => l.classList.remove('toc-sublink-active'));
+        if (bestId) sublinks[bestId]?.classList.add('toc-sublink-active');
+      },
+      { threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5] }
+  );
+
+  document.querySelectorAll('[id]').forEach((el) => {
+    if (el.id && sublinks[el.id]) headingObserver.observe(el);
+  });
+
+  const updateProgress = () => {
+    const scrollTop = window.scrollY;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const progress = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+    if (progressBar) progressBar.style.width = `${Math.min(progress, 100)}%`;
+  };
+
+  window.addEventListener('scroll', updateProgress, { passive: true });
+  window.addEventListener('resize', updateProgress, { passive: true });
+  updateProgress();
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+---
+title: "Appendix B — DOSBox-X in Context: A Comparison with QEMU, 86Box, and PCem"
+description: "A comparison of DOSBox-X against related PC emulation projects across dimensions of hardware fidelity, execution speed, platform scope, and BIOS/OS strategy."
+order: 19
+chapterSlug: "appendix-b-comparative-table"
+part: "appendices"
+---
+
+# Appendix B — DOSBox-X in Context: A Comparison with QEMU, 86Box, and PCem {#appendix-b-dosbox-x-in-context-a-comparison-with-qemu-86box-and-pcem}
+
+*Unlike Appendices A, C, and D, this appendix isn't built incrementally from the chapters — it requires understanding three other projects on their own terms, not just DOSBox-X's. What follows is a working draft: the comparison dimensions and the factual claims are checked against available sources, but the connective prose is intentionally left thin until the rest of this book — and DOSBox-X's own design philosophy, as this book has laid it out — is complete enough to compare against with confidence. Treat this as a skeleton to be finished last, not a finished appendix.*
+
+## Why These Three {#why-these-three}
+
+QEMU, 86Box, and PCem cover a useful spread of design philosophies adjacent to DOSBox-X's own, each making a different tradeoff between the same handful of competing goals: hardware fidelity, execution speed, platform scope, and how much of a real machine's BIOS/OS stack the emulator expects you to supply yourself versus reimplements.
+
+- **PCem** — one of the older low-level PC system emulators in this comparison, and the direct ancestor of 86Box (86Box began as a fork of PCem in 2016). PCem emulates real PC hardware down to the chip level and boots real, unmodified BIOS images and operating systems, but has historically made more performance-motivated shortcuts than 86Box, at some cost to accuracy. As of this writing, PCem's original developer has stepped away from the project, with no further versions expected — a useful contrast to DOSBox-X's own multi-contributor, still-active development model covered in @chapter(what-is-dosbox-x).
+- **86Box** — forked from PCem specifically to push further on accuracy, particularly for 8088/8086-era systems, at the cost of being more resource-intensive on the host. Like PCem, it's a full system emulator: it interprets real BIOS images and real operating system installs rather than reimplementing DOS services in emulator code, and it tries to track a real machine's actual clock speed and timing rather than DOSBox-X's more approximate `cycles=` model. This is close to DOSBox-X's own goal of high hardware fidelity, but achieved through a categorically different strategy — emulate the real BIOS and let it drive real hardware-accurate boot and OS behavior, rather than DOSBox-X's approach of implementing DOS and much of BIOS behavior directly.
+- **QEMU** — a general-purpose machine emulator and virtualizer with a vastly broader scope than any of the other three: it can emulate many CPU architectures, not just x86, and is commonly paired with hardware-assisted virtualization (KVM) to run modern guest operating systems at near-native speed. QEMU's dynamic translation engine (TCG, and multi-threaded TCG) is built for general-purpose speed across arbitrary modern workloads, not for reproducing period-accurate DOS-era hardware quirks — running old DOS-era software under QEMU without period-accurate device emulation tends to expose exactly the kind of timing-dependent bugs @chapter(what-is-dosbox-x) discussed (software that assumed a specific PIT/VGA timing relationship breaking when that relationship no longer holds).
+
+## Comparison Table (Draft) {#comparison-table-draft}
+
+| Dimension | DOSBox-X | 86Box | PCem | QEMU |
+|---|---|---|---|---|
+| Primary goal | Accurate, extensible DOS/Windows 9x/PC-98 environment; also a development and preservation platform (@section(what-is-dosbox-x/goals-of-dosbox-x)) | Cycle-accurate reproduction of specific real PC hardware configurations | Similar to 86Box's goal, historically with more performance-driven shortcuts | General-purpose machine emulation/virtualization across many architectures and eras |
+| DOS/BIOS strategy | Implements DOS kernel services and much of BIOS behavior directly in emulator code (Chapters 12–13, planned) | Boots real, unmodified BIOS images and real OS installs | Same as 86Box | Boots real BIOS/firmware and real OS installs |
+| CPU cores offered | Interpreter and dynamic recompiler, user-selectable (Chapters 5–6) | Primarily interpretation historically, with newer recompiler work | Ships an older recompiler by default | TCG dynamic translation; KVM hardware virtualization when available |
+| Timing model | Configurable, approximate cycle budget (`cycles=`), not tied to a specific real clock speed (@section(main-loop-and-event-scheduler/completing-a-millisecond)–@section(main-loop-and-event-scheduler/closing); full treatment in @chapter(timing-and-cycle-management)) | Aims to track real hardware clock speeds closely | Similar aim to 86Box, less consistently accurate | Not period-accurate by design; optimized for throughput |
+| Platform scope | IBM PC-compatible plus a genuinely separate PC-98 target (@section(what-is-dosbox-x/goals-of-dosbox-x)) | IBM PC-compatible systems across many specific historical configurations | IBM PC-compatible systems | Many architectures (x86, ARM, MIPS, and others), not PC-specific |
+| Active development | Active, multi-contributor, absorbing work from several sibling projects (@section(what-is-dosbox-x/emergence-of-dosbox-x), footnote 1) | Active | Effectively unmaintained as of this writing | Active, large upstream project |
+
+## What This Book Hasn't Yet Established (and Needs to, Before Finishing This Appendix) {#what-this-book-hasn-t-yet-established-and-needs-to-before-finishing-this-appendix}
+
+A few claims above deserve more precision once the relevant chapters exist:
+
+- @chapter(timing-and-cycle-management) (Timing and Cycle Management) needs to fully justify the "approximate cycle budget, not real clock speed" characterization of DOSBox-X against 86Box/PCem's "track real clock speed" approach — right now that's asserted based on general knowledge of both projects, not yet backed by DOSBox-X's own source the way every other claim in this book has been.
+- Part IV (BIOS and DOS Kernel chapters) needs to be written before the "implements DOS/BIOS behavior directly" characterization can be stated with the same confidence as the rest of the table.
+- It would strengthen this appendix to name one or two concrete pieces of DOS-era software that behave differently across these four emulators specifically *because* of the philosophy differences in the table — a real example does more work than an abstract dimension.
+
+## Sources Consulted {#sources-consulted}
+
+- 86Box project FAQ, https://86box.readthedocs.io/en/latest/usage/faq.html
+- 86Box/PCem fork history and accuracy-vs-performance discussion, various 86Box GitHub discussions and community sources (VOGONS forum, OSnews)
+- General QEMU TCG/MTTCG architecture, as discussed in community PC-emulator comparison writeups (Emulation General Wiki)
+
+*(These are secondary/community sources, appropriate for a comparison appendix about other projects' community reputation and general architecture, but weaker grounding than this book's usual standard of primary source code. If a more authoritative primary source — official QEMU or 86Box design documentation — becomes available, this appendix should be revised to cite it directly.)*

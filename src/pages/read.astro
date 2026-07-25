@@ -1,0 +1,44 @@
+---
+import { getCollection, render } from 'astro:content';
+import ReaderLayout from '../layouts/ReaderLayout.astro';
+import PrintChapter from '../components/book/PrintChapter.astro';
+import { SITE } from '../consts';
+
+const chapters = (await getCollection('book'))
+  .filter((entry) => !entry.data.draft)
+  .sort((a, b) => a.data.order - b.data.order);
+
+const rendered = await Promise.all(
+  chapters.map(async (entry) => {
+    const { Content, headings } = await render(entry);
+    const chapterId = entry.data.chapterSlug || entry.id.replace(/\.mdx?$/, '');
+
+    return { Content, chapterId, title: entry.data.title, headings };
+  })
+);
+
+const headingsMap: Record<string, { depth: number; slug: string; text: string }[]> = {};
+for (const r of rendered) {
+  headingsMap[r.chapterId] = r.headings;
+}
+
+const total = rendered.length;
+---
+
+<ReaderLayout
+  title={`Read — ${SITE.title}`}
+  description={SITE.description}
+  headingsMap={headingsMap}
+>
+  {
+    rendered.map(({ Content, chapterId, title }, idx) => (
+      <section id={`ch-${chapterId}`} data-chapter-id={chapterId} data-chapter-title={title} class="reader-chapter" data-pagefind-body>
+        <article class="book-article">
+          <PrintChapter scope="section" align="right" />
+          <Content />
+        </article>
+        {idx < total - 1 && <hr class="reader-chapter-divider" aria-hidden="true" />}
+      </section>
+    ))
+  }
+</ReaderLayout>

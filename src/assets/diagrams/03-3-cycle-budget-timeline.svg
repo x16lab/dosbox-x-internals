@@ -1,0 +1,173 @@
+<svg viewBox="0 0 1000 700" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+<defs>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+
+    --box-bg: #f3f4f6;
+    --box-border: #9ca3af;
+    --box-text: #374151;
+
+    --dashed-line: #6b7280;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-bg: #3a2413;
+    --orange-border: #fb923c;
+    --orange-label: #fdba74;
+    --orange-code: #fed7aa;
+    --orange-footnote: #fdba74;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+
+    --box-bg: #1f2937;
+    --box-border: #94a3b8;
+    --box-text: #e5e7eb;
+
+    --dashed-line: #94a3b8;
+}
+
+.label { font-weight: 700; font-size: 14px; }
+.code  { font-family: Consolas, Menlo, monospace; font-size: 12px; }
+.note  { font-size: 11px; }
+.evt   { font-size: 11px; font-weight: 700; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+</defs>
+
+<!-- Title -->
+<text x="500" y="32" text-anchor="middle" fill="var(--fg-title)" font-size="22" font-weight="700">Cycle Budget Timeline</text>
+<text x="500" y="54" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13" font-family="Consolas, Menlo, monospace">CPU_Cycles spent between sub-millisecond events, refilled each ms by TIMER_AddTick()</text>
+
+<!-- Legend -->
+<g class="note">
+  <rect x="130" y="72" width="14" height="14" fill="var(--green-bg)" stroke="var(--green-border)"/>
+  <text x="150" y="83" fill="var(--footer-text)">CPU running — spending CPU_Cycles</text>
+
+  <rect x="430" y="72" width="14" height="14" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+  <text x="450" y="83" fill="var(--footer-text)">event fires — PIC_RunQueue() dispatch</text>
+
+  <rect x="740" y="72" width="14" height="14" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+  <text x="760" y="83" fill="var(--footer-text)">ms boundary — TIMER_AddTick() refill</text>
+</g>
+
+<!-- ===== Track 1: tick 1042 ===== -->
+<text x="500" y="108" text-anchor="middle" class="label" fill="var(--indigo-label)">tick 1042</text>
+
+<g class="evt" fill="var(--indigo-label)">
+  <text x="196" y="130" text-anchor="middle">VGA H-retrace</text>
+  <text x="428" y="130" text-anchor="middle">SB DMA complete</text>
+  <text x="764" y="130" text-anchor="middle">PIT ch0 rearm</text>
+</g>
+<text x="900" y="130" text-anchor="middle" class="evt" fill="var(--orange-label)">ms boundary</text>
+
+<rect x="100" y="144" width="800" height="60" rx="6" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<text x="112" y="178" class="code" fill="var(--green-code)">(*cpudecoder)() runs…</text>
+<text x="888" y="178" text-anchor="end" class="note" fill="var(--green-note)" font-style="italic">…until budget exhausted</text>
+
+<g stroke="var(--indigo-border)" stroke-width="3">
+  <line x1="196" y1="134" x2="196" y2="214"/>
+  <line x1="428" y1="134" x2="428" y2="214"/>
+  <line x1="764" y1="134" x2="764" y2="214"/>
+</g>
+<line x1="900" y1="134" x2="900" y2="214" stroke="var(--orange-border)" stroke-width="5"/>
+
+<g class="code" fill="var(--indigo-code)" text-anchor="middle">
+  <text x="196" y="230">+0.12 ms</text>
+  <text x="428" y="230">+0.41 ms</text>
+  <text x="764" y="230">+0.83 ms</text>
+</g>
+<text x="900" y="230" text-anchor="middle" class="code" fill="var(--orange-footnote)">CPU_CycleLeft = 0</text>
+
+<!-- boundary -> TIMER_AddTick -->
+<path d="M900,214 L900,246 L650,246 L650,270" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- TIMER_AddTick box -->
+<rect x="350" y="270" width="300" height="110" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="500" y="294" text-anchor="middle" class="label" fill="var(--orange-label)">TIMER_AddTick()</text>
+<text x="500" y="313" text-anchor="middle" class="code" fill="var(--orange-code)">PIC_Ticks++;</text>
+<text x="500" y="330" text-anchor="middle" class="code" fill="var(--orange-code)">CPU_CycleLeft = CPU_CycleMax;  // refill</text>
+<text x="500" y="347" text-anchor="middle" class="code" fill="var(--orange-code)">pic_queue indices -= 1.0;  // age</text>
+<text x="500" y="366" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">GFX_Events(); ticksRemain--;</text>
+
+<!-- TIMER_AddTick -> track 2 -->
+<path d="M350,380 L100,380 L100,456" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- ===== Track 2: tick 1043 ===== -->
+<text x="500" y="420" text-anchor="middle" class="label" fill="var(--indigo-label)">tick 1043</text>
+
+<g class="evt" fill="var(--indigo-label)">
+  <text x="140" y="442" text-anchor="middle">PIT ch0 rearm</text>
+  <text x="564" y="442" text-anchor="middle">Serial byte arrival</text>
+</g>
+<text x="900" y="442" text-anchor="middle" class="evt" fill="var(--orange-label)">ms boundary</text>
+
+<rect x="100" y="456" width="800" height="60" rx="6" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<text x="112" y="490" class="code" fill="var(--green-code)">(*cpudecoder)() runs…</text>
+
+<g stroke="var(--indigo-border)" stroke-width="3">
+  <line x1="140" y1="446" x2="140" y2="526"/>
+  <line x1="564" y1="446" x2="564" y2="526"/>
+</g>
+<line x1="900" y1="446" x2="900" y2="526" stroke="var(--orange-border)" stroke-width="5"/>
+
+<g class="code" fill="var(--indigo-code)" text-anchor="middle">
+  <text x="140" y="542">+0.05 ms</text>
+  <text x="564" y="542">+0.58 ms</text>
+</g>
+<text x="900" y="542" text-anchor="middle" class="code" fill="var(--orange-footnote)">CPU_CycleLeft = 0</text>
+
+<path d="M910,486 L945,486" fill="none" stroke="var(--dashed-line)" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+<text x="960" y="491" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">tick 1044…</text>
+
+<!-- Footer -->
+<line x1="70" y1="580" x2="930" y2="580" stroke="var(--footer-line)"/>
+<text x="500" y="604" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">The CPU spends nearly the whole millisecond CPU-bound — indigo ticks are where PIC_RunQueue() briefly hands off to a scheduled event's handler mid-budget.</text>
+<text x="500" y="624" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">Positions are fractional ticks (index × CPU_CycleMax), not fixed slices — a device can fire anywhere inside the budget, not only at the boundary.</text>
+<text x="500" y="646" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">Only at index 1.0 does the budget genuinely run out — that's when Normal_Loop() falls into the host-bound branch instead of calling the decoder again.</text>
+
+</svg>

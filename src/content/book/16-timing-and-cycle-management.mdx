@@ -1,0 +1,248 @@
+---
+title: "Timing and Cycle Management"
+description: "The cycles= setting and what it actually measures, why a modern host's variable speed makes cycle-exact DOS emulation an unsolvable problem rather than a missing feature, and a full trace of the auto-adjustment heuristic in increaseticks() — including the surprising fact that cycles=auto runs fixed at 3000 cycles until the guest actually enters protected mode."
+order: 16
+chapterSlug: "timing-and-cycle-management"
+part: "software-layers"
+---
+# Chapter 16: Timing and Cycle Management {#chapter-16-timing-and-cycle-management}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 16.1 A Millisecond Means Something Different to Everyone in the Room {#a-millisecond-means-something-different-to-everyone-in-the-room}
+
+Every CPU core this book has covered — the interpreter, its siblings, both dynamic recompilers — shares one constraint none of them control: a cycle budget handed down from outside, exhausted, and refilled by something else entirely. That something else is the subject of this chapter, and it turns out to be one of the harder problems in the whole emulator, for a reason that has nothing to do with instruction decoding, register allocation, or any of the machinery the last several chapters walked through.
+
+A real 1988 PC ran at a fixed, known clock speed. A game written for it in 1988 could get away with tuning its timing against that clock directly — a busy-wait loop counting iterations, a sound routine bit-banging a parallel port at a rate tied to how many instructions fit in a frame, a joystick calibration routine timing how long a capacitor took to discharge by counting loop passes. None of that is a bug; it's how software was routinely written when the hardware underneath it wasn't going to change.
+
+DOSBox-X's host, by contrast, has no fixed speed at all — not just "faster than a 1988 PC," but *variably* faster, from one instant to the next, depending on what else the host operating system decides to schedule, whether a background process just woke up, thermal throttling, power management, or simple OS jitter. There is no single number you could give the emulator that means "run exactly as fast as the hardware this game expects," because that number was never a property of a clock rate to begin with — it was a property of *what the guest software's author assumed*, and every game assumed something slightly different. Some titles query the timer and adapt; a great many don't, and simply run too fast or too slow if the effective instruction rate drifts from what their author tested against.
+
+This is why "cycles" in DOSBox-X's configuration isn't measured in MHz, and isn't trying to reproduce a specific historical clock speed at all. It's measured in something stranger and, as it turns out, considerably more useful: instructions per emulated millisecond.
+
+## 16.2 What `CPU_CycleMax` Actually Measures {#what-cpu-cyclemax-actually-measures}
+
+The `cycles=` option's own help text in the source is unusually direct about this:
+
+```cpp
+Pmulti_remain->Set_help(
+    "Number of instructions DOSBox-X tries to emulate each millisecond.\n"
+    "Setting this value too high results in sound dropouts and lags.\n"
+    ...);
+```
+
+*Per millisecond* — not per second, not relative to a named historical CPU. `CPU_CycleMax` is the number of guest instructions the emulator commits to trying to execute for every one millisecond of *emulated* time that passes, and "emulated time" here means the same PIT-driven tick this book has already built up across Chapters 3 and 7: `TIMER_AddTick()`, called once per emulated millisecond from the main loop, is where that number actually enters the CPU's cycle budget:
+
+```cpp
+void TIMER_AddTick(void) {
+    /* Setup new amount of cycles for PIC */
+    PIC_Ticks++;
+    ...
+    CPU_CycleLeft += CPU_CycleMax + CPU_Cycles;
+    CPU_Cycles = 0;
+    ...
+}
+```
+
+Every emulated millisecond, whatever's left over from the last one plus a fresh `CPU_CycleMax` gets added to `CPU_CycleLeft` — the same budget @chapter(main-loop-and-event-scheduler) already covered `CPU_Core_Normal_Run()` and every other core spending down to zero before yielding back to the scheduler. `PIC_RunQueue()` uses the exact same number to decide when the *next* scheduled hardware event — a PIT tick, a keyboard IRQ, anything queued through `PIC_AddEvent()` — is due, by converting a fractional-millisecond event index directly into a cycle count:
+
+```cpp
+Bits cycles=(Bits)(pic_queue.next_entry->index*CPU_CycleMax-index_nd);
+```
+
+So `CPU_CycleMax` is doing two jobs simultaneously, and they pull in opposite directions. It's the throttle that keeps a fast host from blowing through a millisecond of emulated time in a microsecond — and it's also the unit conversion factor between "how far into this millisecond are we" and "how many instructions have we budgeted for it," which every piece of scheduled hardware timing in Chapters 3 and 7 depends on being right. Set it too low, and correct software runs in slow motion. Set it too high for what the host can actually sustain in real time, and the *real*-time side of that conversion breaks down — a millisecond of emulated time quietly takes longer than a millisecond of wall-clock time to actually deliver, and anything timing-sensitive (digitized sound being the classic casualty) starts to stutter.
+
+## 16.3 Three Ways to Answer an Unanswerable Question {#three-ways-to-answer-an-unanswerable-question}
+
+The `cycles=` option offers three modes, and the config parser (`src/cpu/cpu.cpp`) treats each one as a genuinely different bet about what you're running:
+
+```cpp
+if (type=="max") {
+    RDTSC_rebase();
+    CPU_CycleMax=0;
+    CPU_CyclePercUsed=100;
+    CPU_CycleAutoAdjust=true;
+    CPU_CycleLimit=-1;
+    ...   // optional "N%" and "limit N" parameters
+} else {
+    if (type=="auto") {
+        RDTSC_rebase();
+        CPU_AutoDetermineMode|=CPU_AUTODETERMINE_CYCLES;
+        CPU_CycleMax=3000;
+        CPU_OldCycleMax=3000;
+        CPU_CyclePercUsed=100;
+        ...   // optional "N%", "limit N", or a bare starting number
+    } else if (type=="fixed") {
+        ...
+        CPU_CycleMax=(int32_t)rmdval;
+    } else {
+        ...   // bare number, same effect as "fixed"
+    }
+    CPU_CycleAutoAdjust=false;
+}
+```
+
+`fixed N` (and a bare number, its shorthand) is the honest option: pick a number and commit to it. It's what the help text recommends reaching for when `auto` gets something wrong, because it removes the guesswork entirely — the tradeoff is that *you* now have to know, or find by trial and error, roughly how many instructions per millisecond the specific game you're running was tuned against.
+
+`max` sets `CPU_CycleMax` to `0` and turns auto-adjustment on immediately and unconditionally — it's betting that the host has more headroom than any DOS-era game could plausibly need, and that the only real question left is *how much of that headroom to actually use* (`CPU_CyclePercUsed`, defaulting to 100%, is exactly that dial).
+
+`auto`, on the other hand, seeds `CPU_CycleMax` at a conservative `3000` — and, as the next section shows, doesn't actually behave like an auto-adjusting mode at all until something specific happens.
+
+## 16.4 The Part That Looks Like a Bug and Isn't: `auto` Starts Out Fixed {#the-part-that-looks-like-a-bug-and-isn-t-auto-starts-out-fixed}
+
+Look closely at the block above and one thing doesn't add up: the `auto` branch never sets `CPU_CycleAutoAdjust=true`. The line right after the whole `if/else` chain sets it to `false` — for `auto`, for `fixed`, and for a bare number alike:
+
+```cpp
+        } else { ... }
+        CPU_CycleAutoAdjust=false;
+    }
+```
+
+Only `max` sets `CPU_CycleAutoAdjust=true` at parse time. `cycles=auto`, at the moment DOSBox-X boots into real-mode DOS, is — despite its name — running with a **fixed** cycle count of 3000, auto-adjustment turned off, identically to `cycles=fixed 3000`.
+
+What `auto` actually sets is a flag, `CPU_AutoDetermineMode |= CPU_AUTODETERMINE_CYCLES`, that does nothing on its own until the guest CPU does something specific: write to control register 0 with the protection bit set. @chapter(interrupts-exceptions-pic) already covered `CPU_Exception()`'s territory around privilege and mode transitions; this is the other side of that same coin — the handler for a `MOV CR0` that flips the CPU into protected mode checks that flag directly:
+
+```cpp
+if (value & CR0_PROTECTION) {
+    cpu.pmode=true;
+    LOG(LOG_CPU,LOG_NORMAL)("Protected mode");
+    PAGING_Enable((value&CR0_PAGING)? true:false);
+
+    if (!(CPU_AutoDetermineMode&CPU_AUTODETERMINE_MASK)) break;
+
+    if (CPU_AutoDetermineMode&CPU_AUTODETERMINE_CYCLES) {
+        CPU_CycleAutoAdjust=true;
+        CPU_CycleLeft=0;
+        CPU_Cycles=0;
+        CPU_OldCycleMax=CPU_CycleMax;
+        GFX_SetTitle((int32_t)CPU_CyclePercUsed,-1,-1,false);
+        if(!printed_cycles_auto_info) {
+            printed_cycles_auto_info = true;
+            LOG_MSG("DOSBox-X has switched to max cycles, because of the setting: cycles=auto.\n"
+                     "If the game runs too fast, try a fixed cycles amount in DOSBox-X's options.");
+        }
+        menu_update_autocycle();
+    }
+```
+
+Only *here* — the instant the guest voluntarily enters protected mode — does `cycles=auto` actually turn auto-adjustment on. Until then, DOS software gets a safe, unautomated, period-plausible fixed speed; the moment something like Windows 3.x's 386 Enhanced Mode, Windows 9x, OS/2, or a protected-mode DOS extender switches the CPU over, DOSBox-X takes that as a signal that whatever's now running is sophisticated enough to self-pace — through `HLT` instructions, an idle loop, or its own internal scheduler — and hands it as much of the host's speed as the ratio heuristic in the next section can safely extract.
+
+That's the actual shape of "auto": not a single continuously-adjusting mode, but a bet that real-mode DOS software wants a specific, believable, unchanging number, and that only software advanced enough to negotiate for CPU time on its own behalf should be handed a variable one.
+
+## 16.5 The Heuristic Itself: `increaseticks()` and the 90% Target {#the-heuristic-itself-increaseticks-and-the-90-target}
+
+Once auto-adjustment actually is running — `max` from the start, `auto` from the moment protected mode kicks in — the logic that decides whether to raise or lower `CPU_CycleMax` lives in `increaseticks()` (`src/dosbox.cpp`), called once per iteration of the main loop. Its job is to compare two numbers accumulated since the last adjustment: `ticksScheduled`, how many emulated milliseconds DOSBox-X *told* the CPU it had to work with, and `ticksDone`, how many real milliseconds *actually elapsed* getting through them.
+
+Every call, the real elapsed time since the last one (capped at 20ms, so a single long stall — a window drag, an OS hiccup — can't corrupt the whole measurement) becomes the next batch of emulated milliseconds to run:
+
+```cpp
+ticksLast = ticksNew;
+ticksDone += (int32_t)ticksRemain;
+if (ticksRemain > 20) ticksRemain = 20;
+ticksAdded = ticksRemain;
+```
+
+Roughly every 250ms of either measure (or sooner, if a single batch was unusually large), the heuristic actually acts on what it's accumulated. The core of it is a ratio, expressed in 1024ths for fixed-point precision, aimed at keeping the emulated CPU at 90% of `CPU_CyclePercUsed`'s target utilization — not 100%, deliberately leaving headroom rather than chasing exact saturation:
+
+```cpp
+/* ratio we are aiming for is around 90% usage*/
+int32_t ratio = (int32_t)((ticksScheduled * (CPU_CyclePercUsed * 90 * 1024 / 100 / 100)) / ticksDone);
+```
+
+If the guest finished its scheduled milliseconds of work in *less* real time than was scheduled for them, `ratio` comes out above `1024` — the host had spare capacity, and `CPU_CycleMax` should rise. If it took *longer*, `ratio` falls below `1024` and `CPU_CycleMax` should fall. Two refinements sit on top of that raw comparison before any adjustment is actually made:
+
+**Time burned in emulated I/O delay loops doesn't count against the host.** A lot of what a DOS program's "CPU time" consists of, from the emulator's point of view, is busy-waiting on a hardware register — polling a UART, waiting on the PIT (Chapters 3 and 7's territory again). DOSBox-X tracks how many of the scheduled cycles were spent in that kind of deliberate I/O delay (`CPU_IODelayRemoved`) and subtracts its share out of the ratio before deciding anything, so that a game that happens to poll hardware a lot doesn't get misread as a game that needs a faster host:
+
+```cpp
+double ratioremoved = (double)CPU_IODelayRemoved / (double)cproc;
+if (ratioremoved < 1.0) {
+    double ratio_not_removed = 1 - ratioremoved;
+    ratio = (int32_t)((double)ratio * ratio_not_removed);
+    ...
+}
+```
+
+**Small measurement noise is deliberately ignored.** A `ratio` under `10` (under about 1%) is treated as a rounding artifact of the sampling window, not a real signal, and skipped entirely. A `ratio` between roughly 10 and 120 is treated as probably caused by a *different* application briefly hogging the host — unrelated background load, not something DOSBox-X should chase by throttling the emulated CPU down — unless the measurement window itself was unusually short (`ticksDone < 700`), in which case it's trusted anyway:
+
+```cpp
+/* ratios below 1% are considered to be dropouts due to
+   temporary load imbalance, the cycles adjusting is skipped */
+if (ratio > 10) {
+    /* ratios below 12% along with a large time since the last update
+       has taken place are most likely caused by heavy load through a
+       different application, the cycles adjusting is skipped as well */
+    if ((ratio > 120) || (ticksDone < 700)) {
+        RDTSC_rebase();
+        CPU_CycleMax = new_cmax;
+        if (CPU_CycleLimit > 0) {
+            if (CPU_CycleMax > CPU_CycleLimit) CPU_CycleMax = CPU_CycleLimit;
+        } else if (CPU_CycleMax > 2000000) CPU_CycleMax = 2000000; // hardcoded limit if none specified
+    }
+}
+```
+
+`CPU_CycleMax` never drops below a hard floor either way (`CPU_CYCLES_LOWER_LIMIT`, `200` — low enough that DOS itself can still limp along, not so low the emulator effectively halts). And a case severe enough not to wait for the usual measurement window gets its own emergency branch: if a single batch was capped at the 20ms ceiling but barely any emulated work had actually been scheduled yet, `CPU_CycleMax` gets cut to a third of its previous value immediately, rather than waiting a quarter of a second to react to what was clearly a serious stall:
+
+```cpp
+else if (ticksAdded > 15) {
+    /* lower the cycles but do not reset the scheduled/done ticks,
+       to take them into account during the next auto cycle adjustment */
+    RDTSC_rebase();
+    CPU_CycleMax /= 3;
+    if (CPU_CycleMax < CPU_CYCLES_LOWER_LIMIT) CPU_CycleMax = CPU_CYCLES_LOWER_LIMIT;
+}
+```
+
+One more detail is worth naming for what it says about how long this code has had to contend with real host behavior rather than an idealized one. On some systems, a requested 1-millisecond sleep reliably returns after *exactly* 1ms, every time — which sounds like a good thing, but produces a resonance with the auto-adjust sampling window that destabilizes it. `increaseticks()` detects three such suspiciously-exact sleeps in a row and deliberately starts injecting irregular delays instead, cycling through a fixed pattern rather than a constant one:
+
+```cpp
+static const uint32_t sleeppattern[] = { 2, 2, 3, 2, 2, 4, 2 };
+```
+
+Even the act of measuring how fast the host is turns out to need protecting from a host that measures itself too consistently.
+
+## 16.6 Manual Overrides and Fast Forward {#manual-overrides-and-fast-forward}
+
+The same two hotkeys that adjust cycle speed manually (`CPU_CycleIncrease`/`CPU_CycleDecrease`, bound by default to the `cycleup`/`cycledown` mapper actions) do something different depending on whether auto-adjustment is currently active. In auto mode, they don't touch `CPU_CycleMax` at all — they nudge the *target percentage* the ratio heuristic is aiming for, five points at a time, capped at 105:
+
+```cpp
+if (CPU_CycleAutoAdjust) {
+    CPU_CyclePercUsed+=5;
+    if (CPU_CyclePercUsed>105) CPU_CyclePercUsed=105;
+    ...
+}
+```
+
+In fixed mode, the same two keys instead scale `CPU_CycleMax` directly, by a percentage (`cycleup`/`cycledown`, defaulting to 10% up and 20% down — deliberately asymmetric, so a manual correction downward acts faster than one upward) or by a flat amount if the configured step is 100 or more:
+
+```cpp
+if (CPU_CycleUp < 100) {
+    CPU_CycleMax = (int32_t)(CPU_CycleMax * (1 + (float)CPU_CycleUp / 100.0));
+} else {
+    CPU_CycleMax = (int32_t)(CPU_CycleMax + CPU_CycleUp);
+}
+```
+
+Fast Forward (the "unlock speed" hotkey) interacts with all of this directly rather than sitting alongside it. Turning Fast Forward on locks the tick-accumulation loop to a fixed small increment regardless of real elapsed time (`ticksLocked`, handled back in `increaseticks()`'s very first branch) — and if auto-adjustment happens to be active at that moment, it's explicitly suspended for the duration, with `CPU_CycleMax` cut to a third and floored at 1000, then restored to auto-adjusting once Fast Forward ends:
+
+```cpp
+if (CPU_CycleAutoAdjust) {
+    autoadjust = true;
+    CPU_CycleAutoAdjust = false;
+    CPU_CycleMax /= 3;
+    if (CPU_CycleMax<1000) CPU_CycleMax=1000;
+}
+...
+// on release:
+if (autoadjust) {
+    autoadjust = false;
+    CPU_CycleAutoAdjust = true;
+}
+```
+
+The ratio heuristic's whole premise — that real elapsed time is a meaningful signal — stops being true the instant the person running DOSBox-X asks the emulator to stop pretending real time matters at all. Rather than let the two fight each other, Fast Forward simply takes auto-adjustment off the field until it's over.
+
+## 16.7 Why This Doesn't Get a Final Answer {#why-this-doesn-t-get-a-final-answer}
+
+Put next to the last several chapters, cycle management is a strange kind of problem to end this stretch of the book on, because it's the one place where getting the implementation right doesn't make the underlying problem go away. Everything from @chapter(main-loop-and-event-scheduler) onward has been about faithfully reproducing a fixed, knowable target — a specific PIC's priority scheme, a specific segment-load shift, a specific opcode's flag behavior. `CPU_CycleMax` isn't reproducing anything fixed, because there's nothing fixed on either side of the equation it's balancing: not the host, whose available throughput changes moment to moment for reasons entirely outside the emulator's control, and not the guest, whose "correct" speed was never a property of DOSBox-X to begin with — it's a property of which specific machine, in which specific year, some other programmer was staring at when they decided how many loop iterations should equal one game tick.
+
+`fixed` accepts that and asks a person to supply the missing number. `max` refuses to guess at all and just asks for as much as the host will give. `auto` tries to have it both ways — trusting real-mode DOS with a safe, unchanging default because that's the software most likely to have hardcoded an assumption about it, and only handing the ratio heuristic the wheel once the guest itself signals, by entering protected mode, that it's the kind of software built to share the CPU rather than assume it owns it outright. None of the three is "correct" in the sense Chapters 5 through 7 could aim for. They're three different, honest admissions that the question "how fast should this run" doesn't have a single right answer waiting to be discovered in the source — only a continuous negotiation, remeasured a few times a second, for as long as the emulator keeps running.

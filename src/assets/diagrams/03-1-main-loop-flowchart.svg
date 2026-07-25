@@ -1,0 +1,156 @@
+<svg viewBox="0 0 900 950" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+<defs>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+
+    --box-bg: #f3f4f6;
+    --box-border: #9ca3af;
+    --box-text: #374151;
+
+    --dashed-line: #6b7280;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-bg: #3a2413;
+    --orange-border: #fb923c;
+    --orange-label: #fdba74;
+    --orange-code: #fed7aa;
+    --orange-footnote: #fdba74;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+
+    --box-bg: #1f2937;
+    --box-border: #94a3b8;
+    --box-text: #e5e7eb;
+
+    --dashed-line: #94a3b8;
+}
+
+.label   { font-weight: 700; font-size: 15px; }
+.code    { font-family: Consolas, Menlo, monospace; font-size: 12.5px; }
+.note    { font-size: 11px; }
+.chip    { font-weight: 700; font-size: 12px; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+</defs>
+
+<!-- Title -->
+<text x="450" y="34" text-anchor="middle" fill="var(--fg-title)" font-size="22" font-weight="700">The Main Loop and Event Scheduler</text>
+<text x="450" y="56" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13" font-family="Consolas, Menlo, monospace">main() → DOSBOX_RunMachine() → Normal_Loop() → PIC_RunQueue()</text>
+
+<!-- main() -->
+<rect x="350" y="80" width="200" height="54" rx="10" fill="var(--box-bg)" stroke="var(--box-border)"/>
+<text x="450" y="103" text-anchor="middle" class="label" fill="var(--box-text)">main()</text>
+<text x="450" y="122" text-anchor="middle" class="code" fill="var(--box-text)">src/gui/sdlmain.cpp</text>
+
+<path d="M450,134 L450,156" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- DOSBOX_RunMachine -->
+<rect x="300" y="156" width="300" height="86" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="450" y="180" text-anchor="middle" class="label" fill="var(--indigo-label)">DOSBOX_RunMachine()</text>
+<text x="450" y="202" text-anchor="middle" class="code" fill="var(--indigo-code)">do { ret = (*loop)(); } while (!ret);</text>
+<text x="450" y="221" text-anchor="middle" class="note" fill="var(--indigo-note)">loop = Normal_Loop (swappable via DOSBOX_SetLoop)</text>
+
+<path d="M450,242 L450,274" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Normal_Loop -->
+<rect x="300" y="274" width="300" height="70" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="450" y="298" text-anchor="middle" class="label" fill="var(--indigo-label)">Normal_Loop()</text>
+<text x="450" y="318" text-anchor="middle" class="code" fill="var(--indigo-code)">while (1) { ... }</text>
+<text x="450" y="334" text-anchor="middle" class="note" fill="var(--indigo-note)">src/dosbox.cpp</text>
+
+<path d="M450,344 L450,404" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Decision diamond -->
+<polygon points="450,404 585,460 450,516 315,460" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+<text x="450" y="455" text-anchor="middle" class="label" fill="var(--box-text)" font-size="13">PIC_RunQueue()</text>
+<text x="450" y="472" text-anchor="middle" class="note" fill="var(--box-text)">cycle budget left this ms?</text>
+
+<!-- true branch -->
+<path d="M315,460 L215,460 L215,560" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="130" y="422" width="60" height="24" rx="5" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<text x="160" y="438" text-anchor="middle" class="chip" fill="var(--green-label)">true</text>
+
+<!-- false branch -->
+<path d="M585,460 L685,460 L685,560" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="670" y="422" width="65" height="24" rx="5" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="702" y="438" text-anchor="middle" class="chip" fill="var(--orange-label)">false</text>
+
+<!-- CPU-bound box -->
+<rect x="60" y="560" width="310" height="150" rx="10" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<text x="215" y="586" text-anchor="middle" class="label" fill="var(--green-label)">CPU-bound regime</text>
+<text x="215" y="608" text-anchor="middle" class="code" fill="var(--green-code)">CPU_Check_NMI();</text>
+<text x="215" y="626" text-anchor="middle" class="code" fill="var(--green-code)">ret = (*cpudecoder)();</text>
+<text x="215" y="648" text-anchor="middle" class="note" fill="var(--green-note)">ret &lt; 0 → return 1 (stop)</text>
+<text x="215" y="664" text-anchor="middle" class="note" fill="var(--green-note)">ret &gt; 0 → dispatch CallBack_Handlers[ret]</text>
+<text x="215" y="686" text-anchor="middle" class="note" fill="var(--green-note)" font-style="italic">interpreter / dynamic core spend cycles here</text>
+
+<!-- Host-bound box -->
+<rect x="530" y="560" width="310" height="150" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="685" y="586" text-anchor="middle" class="label" fill="var(--orange-label)">Host-bound regime</text>
+<text x="685" y="608" text-anchor="middle" class="code" fill="var(--orange-code)">GFX_Events();</text>
+<text x="685" y="626" text-anchor="middle" class="code" fill="var(--orange-code)">TIMER_AddTick(); ticksRemain--;</text>
+<text x="685" y="648" text-anchor="middle" class="note" fill="var(--orange-note, var(--orange-footnote))">cycle budget for this ms is exhausted</text>
+<text x="685" y="664" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">ticksRemain == 0 → increaseticks(); return 0</text>
+<text x="685" y="686" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">this is also where SDL_Delay(1) lets the host rest</text>
+
+<!-- loop-back: CPU-bound -> Normal_Loop (left margin corridor) -->
+<path d="M215,710 L215,770 L40,770 L40,310 L300,310"
+      fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+
+<!-- loop-back: Host-bound -> Normal_Loop (right margin corridor) -->
+<path d="M685,710 L685,790 L860,790 L860,310 L600,310"
+      fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+
+<!-- Footer -->
+<line x1="40" y1="800" x2="860" y2="800" stroke="var(--footer-line)"/>
+<text x="450" y="826" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">PIC_RunQueue() is the gatekeeper: true spends cycles in the CPU decoder, false pumps host events and advances the millisecond clock.</text>
+<text x="450" y="846" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">The CPU never free-runs — (*cpudecoder)() is only ever handed the bounded CPU_Cycles set by PIC_RunQueue().</text>
+<text x="450" y="870" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">Host-bound exit is simplified above: return 0 unwinds Normal_Loop() back to DOSBOX_RunMachine()'s do/while, which immediately re-enters Normal_Loop().</text>
+
+</svg>

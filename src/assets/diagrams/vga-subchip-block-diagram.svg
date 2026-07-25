@@ -1,0 +1,295 @@
+<svg viewBox="0 0 900 940" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, Helvetica, Arial, sans-serif">
+    <defs>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --inset-bg: #f9fafb;
+            --inset-border: #9ca3af;
+            --inset-label: #374151;
+            --cell-bg: #ffffff;
+            --cell-border: #d1d5db;
+            --cell-hl-bg: #dbeafe;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #374151;
+            --offset-label: #374151;
+            --segment-label: #1d4ed8;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --rose-bg: #fff1f2;
+            --rose-border: #f43f5e;
+            --rose-label: #be123c;
+            --rose-code: #881337;
+            --rose-note: #4b5563;
+
+            --amber-bg: #fffbeb;
+            --amber-border: #f59e0b;
+            --amber-label: #b45309;
+            --amber-code: #78350f;
+            --amber-note: #4b5563;
+
+            --teal-bg: #f0fdfa;
+            --teal-border: #14b8a6;
+            --teal-label: #0f766e;
+            --teal-code: #134e4a;
+            --teal-note: #4b5563;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --dashed-line: #6b7280;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --inset-bg: #1f2937;
+            --inset-border: #94a3b8;
+            --inset-label: #e5e7eb;
+            --cell-bg: #111827;
+            --cell-border: #6b7280;
+            --cell-hl-bg: #1e3a5f;
+            --cell-hl-border: #3b82f6;
+            --cell-text: #e5e7eb;
+            --offset-label: #e5e7eb;
+            --segment-label: #60a5fa;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --rose-bg: #4c1120;
+            --rose-border: #fb7185;
+            --rose-label: #fda4af;
+            --rose-code: #ffe4e6;
+            --rose-note: #9ca3af;
+
+            --amber-bg: #451a03;
+            --amber-border: #fbbf24;
+            --amber-label: #fcd34d;
+            --amber-code: #fef3c7;
+            --amber-note: #9ca3af;
+
+            --teal-bg: #0f3330;
+            --teal-border: #2dd4bf;
+            --teal-label: #5eead4;
+            --teal-code: #ccfbf1;
+            --teal-note: #9ca3af;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --dashed-line: #94a3b8;
+            }
+        </style>
+
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+        <marker id="arrow-dashed" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--dashed-line)"/>
+        </marker>
+    </defs>
+
+    <!-- Title -->
+    <text x="450" y="26" text-anchor="middle" font-size="19" font-weight="700" fill="var(--fg-title)">VGA's five sub-chips — a small network, not one device</text>
+    <text x="450" y="45" text-anchor="middle" font-size="12.5" fill="var(--fg-subtitle)">CRTC, Sequencer, Graphics Controller, Attribute Controller, and DAC, each with its own I/O ports and register set, wired to a shared bank of video RAM</text>
+
+    <!-- Cross-link: 0x3DA status-register read force-resets the Attribute Controller's flip-flop -->
+    <path d="M621,109 C621,72 108,72 108,109" fill="none" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3" marker-end="url(#arrow-dashed)"/>
+    <text x="364" y="60" text-anchor="middle" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-footnote)">reading status port 0x3DA unconditionally clears the AC's index/data flip-flop</text>
+    <text x="364" y="72" text-anchor="middle" font-size="8.5" fill="var(--orange-footnote)" font-style="italic">— an electrical coupling between two "unrelated" blocks, not a software design choice</text>
+
+    <!-- ===================== ROW 1: FIVE SUB-CHIP BLOCKS ===================== -->
+
+    <!-- Box 1: CRTC (indigo) -->
+    <rect x="30" y="110" width="156" height="290" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="45" y="132" font-size="13" font-weight="700" fill="var(--indigo-label)">CRTC</text>
+    <text x="45" y="150" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--indigo-code)">0x3D4 idx / 0x3D5 data</text>
+    <text x="45" y="170" font-size="8.5" font-weight="700" fill="var(--indigo-note)">key registers</text>
+    <text x="45" y="184" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--indigo-code)">0x07 Overflow</text>
+    <text x="45" y="196" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--indigo-code)"> (9th/10th bits of</text>
+    <text x="45" y="208" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--indigo-code)"> vtotal/vretrace/vend)</text>
+    <text x="45" y="224" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--indigo-code)">0x0E/0x0F Cursor Loc</text>
+    <text x="45" y="238" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--indigo-code)">0x0C/0x0D Start Addr</text>
+    <text x="45" y="266" font-size="8.5" fill="var(--indigo-note)">raster timing — scanline</text>
+    <text x="45" y="279" font-size="8.5" fill="var(--indigo-note)">counts, blanking/retrace,</text>
+    <text x="45" y="292" font-size="8.5" fill="var(--indigo-note)">text cursor position.</text>
+    <text x="45" y="305" font-size="8.5" fill="var(--indigo-note)">answers "when."</text>
+    <text x="45" y="332" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--indigo-label)" font-style="italic">vga_write_p3d4()</text>
+    <text x="45" y="344" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--indigo-label)" font-style="italic">vga_crtc.cpp</text>
+
+    <!-- Box 2: Sequencer (green) -->
+    <rect x="201" y="110" width="156" height="290" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="216" y="132" font-size="13" font-weight="700" fill="var(--green-label)">Sequencer</text>
+    <text x="216" y="150" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--green-code)">0x3C4 idx / 0x3C5 data</text>
+    <text x="216" y="170" font-size="8.5" font-weight="700" fill="var(--green-note)">key registers</text>
+    <text x="216" y="184" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--green-code)">0x02 Map Mask</text>
+    <text x="216" y="196" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--green-code)"> (which planes are</text>
+    <text x="216" y="208" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--green-code)"> writable right now)</text>
+    <text x="216" y="224" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--green-code)">0x04 Memory Mode</text>
+    <text x="216" y="236" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--green-code)"> bit3 = chain-4</text>
+    <text x="216" y="266" font-size="8.5" fill="var(--green-note)">pixel clock + plane</text>
+    <text x="216" y="279" font-size="8.5" fill="var(--green-note)">access control. answers</text>
+    <text x="216" y="292" font-size="8.5" fill="var(--green-note)">"which planes," "how fast."</text>
+    <text x="216" y="305" font-size="8.5" fill="var(--green-note)">chain-4 picks the PageHandler.</text>
+    <text x="216" y="332" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--green-label)" font-style="italic">vga_write_p3c4()</text>
+    <text x="216" y="344" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--green-label)" font-style="italic">vga_seq.cpp</text>
+
+    <!-- Box 3: Graphics Controller (orange) -->
+    <rect x="372" y="110" width="156" height="290" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="387" y="132" font-size="13" font-weight="700" fill="var(--orange-label)">Graphics Ctrl</text>
+    <text x="387" y="150" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--orange-code)">0x3CE idx / 0x3CF data</text>
+    <text x="387" y="170" font-size="8.5" font-weight="700" fill="var(--orange-code)">key registers</text>
+    <text x="387" y="184" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--orange-code)">Write Modes 0-3</text>
+    <text x="387" y="196" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--orange-code)"> (rotate, set/reset,</text>
+    <text x="387" y="208" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--orange-code)"> ROP, bit mask)</text>
+    <text x="387" y="224" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--orange-code)">Read Modes 0-1</text>
+    <text x="387" y="236" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--orange-code)">32-bit latch (last read)</text>
+    <text x="387" y="266" font-size="8.5" fill="var(--orange-code)">CPU-&gt;VRAM data path:</text>
+    <text x="387" y="279" font-size="8.5" fill="var(--orange-code)">one CPU byte becomes a</text>
+    <text x="387" y="292" font-size="8.5" fill="var(--orange-code)">multi-plane pixel op.</text>
+    <text x="387" y="305" font-size="8.5" fill="var(--orange-code)">latch enables fast block copy.</text>
+    <text x="387" y="332" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--orange-label)" font-style="italic">vga_write_p3ce()</text>
+    <text x="387" y="344" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--orange-label)" font-style="italic">vga_gfx.cpp</text>
+
+    <!-- Box 4: Attribute Controller (rose) -->
+    <rect x="543" y="110" width="156" height="290" rx="10" fill="var(--rose-bg)" stroke="var(--rose-border)" stroke-width="1.5"/>
+    <text x="558" y="132" font-size="13" font-weight="700" fill="var(--rose-label)">Attribute Ctrl</text>
+    <text x="558" y="150" font-family="Consolas, Menlo, monospace" font-size="9.5" fill="var(--rose-code)">0x3C0 — single port</text>
+    <text x="558" y="170" font-size="8.5" font-weight="700" fill="var(--rose-note)">key registers</text>
+    <text x="558" y="184" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--rose-code)">0x00-0x0F Palette</text>
+    <text x="558" y="196" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--rose-code)">Overscan color</text>
+    <text x="558" y="208" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--rose-code)">Mode Control (blink)</text>
+    <text x="558" y="220" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--rose-code)">internal index/data</text>
+    <text x="558" y="232" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--rose-code)"> flip-flop (bool)</text>
+    <text x="558" y="262" font-size="8.5" fill="var(--rose-note)">breaks the idx/data-pair</text>
+    <text x="558" y="275" font-size="8.5" fill="var(--rose-note)">pattern the other three</text>
+    <text x="558" y="288" font-size="8.5" fill="var(--rose-note)">share — one port toggles</text>
+    <text x="558" y="301" font-size="8.5" fill="var(--rose-note)">meaning on every write.</text>
+    <text x="558" y="332" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--rose-label)" font-style="italic">write_p3c0()</text>
+    <text x="558" y="344" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--rose-label)" font-style="italic">vga_attr.cpp</text>
+
+    <!-- Box 5: DAC (amber) -->
+    <rect x="714" y="110" width="156" height="290" rx="10" fill="var(--amber-bg)" stroke="var(--amber-border)" stroke-width="1.5"/>
+    <text x="729" y="132" font-size="13" font-weight="700" fill="var(--amber-label)">DAC (RAMDAC)</text>
+    <text x="729" y="150" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--amber-code)">0x3C7 r-idx / 0x3C8 w-idx</text>
+    <text x="729" y="162" font-family="Consolas, Menlo, monospace" font-size="9" fill="var(--amber-code)">0x3C9 data (R,G,B x1)</text>
+    <text x="729" y="180" font-size="8.5" font-weight="700" fill="var(--amber-note)">state</text>
+    <text x="729" y="194" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--amber-code)">256 x 18-bit RGB table</text>
+    <text x="729" y="206" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--amber-code)"> (6 bits/channel)</text>
+    <text x="729" y="220" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--amber-code)">pel_index: 0..2 cycles</text>
+    <text x="729" y="232" font-family="Consolas, Menlo, monospace" font-size="8.5" fill="var(--amber-code)"> through R, G, B writes</text>
+    <text x="729" y="262" font-size="8.5" fill="var(--amber-note)">final stage: palette</text>
+    <text x="729" y="275" font-size="8.5" fill="var(--amber-note)">index -&gt; analog RGB.</text>
+    <text x="729" y="288" font-size="8.5" fill="var(--amber-note)">6-bit mask is default —</text>
+    <text x="729" y="301" font-size="8.5" fill="var(--amber-note)">req'd for Amulets &amp; Armor.</text>
+    <text x="729" y="332" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--amber-label)" font-style="italic">write_p3c9()</text>
+    <text x="729" y="344" font-family="Consolas, Menlo, monospace" font-size="8" fill="var(--amber-label)" font-style="italic">vga_dac.cpp</text>
+
+    <!-- ===================== CONVERGENCE INTO SHARED VIDEO RAM ===================== -->
+
+    <!-- solid drops: CRTC, Sequencer, Graphics Controller — directly wired to VRAM -->
+    <line x1="108" y1="400" x2="108" y2="416" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="279" y1="400" x2="279" y2="416" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="450" y1="400" x2="450" y2="416" stroke="var(--arrow)" stroke-width="1.5"/>
+    <!-- dashed drops: Attribute Controller, DAC — downstream of VRAM's scanout, not direct writers -->
+    <line x1="621" y1="400" x2="621" y2="416" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+    <line x1="792" y1="400" x2="792" y2="416" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3"/>
+
+    <line x1="108" y1="416" x2="792" y2="416" stroke="var(--arrow)" stroke-width="1.5"/>
+    <line x1="450" y1="416" x2="450" y2="438" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Shared Video RAM -->
+    <rect x="60" y="438" width="780" height="92" rx="10" fill="var(--teal-bg)" stroke="var(--teal-border)" stroke-width="1.5"/>
+    <text x="80" y="462" font-size="12" font-weight="700" fill="var(--teal-label)">SHARED VIDEO RAM — 4 planes x 64 KB, mapped at segment 0xA000</text>
+    <text x="80" y="484" font-family="Consolas, Menlo, monospace" font-size="10.5" fill="var(--teal-code)">planar layout: one byte address selects the same offset in all four planes at once</text>
+    <text x="80" y="503" font-size="9.5" fill="var(--teal-note)">solid lines = wired directly to VRAM (CRTC's scanout address, Sequencer's plane mask, GC's write-mode transform)</text>
+    <text x="80" y="517" font-size="9.5" fill="var(--teal-note)">dashed lines = downstream of VRAM in the scanout pipeline, not direct writers (Attribute Controller, DAC — see below)</text>
+
+    <!-- ===================== DOWNSTREAM SCANOUT PIXEL PIPELINE ===================== -->
+
+    <text x="450" y="558" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--fg-title)">scanout pixel pipeline — one pixel at a time, not one CPU byte at a time</text>
+
+    <rect x="60" y="575" width="190" height="60" rx="8" fill="var(--teal-bg)" stroke="var(--teal-border)" stroke-width="1.5"/>
+    <text x="155" y="600" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--teal-label)">VRAM</text>
+    <text x="155" y="618" text-anchor="middle" font-size="9" fill="var(--teal-note)">scanned-out pixel index</text>
+
+    <line x1="250" y1="605" x2="288" y2="605" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="290" y="575" width="190" height="60" rx="8" fill="var(--rose-bg)" stroke="var(--rose-border)" stroke-width="1.5"/>
+    <text x="385" y="597" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--rose-label)">Attribute Ctrl</text>
+    <text x="385" y="613" text-anchor="middle" font-size="9" fill="var(--rose-note)">index -&gt; palette entry</text>
+    <text x="385" y="626" text-anchor="middle" font-size="9" fill="var(--rose-note)">(0x00-0x0F lookup)</text>
+
+    <line x1="480" y1="605" x2="518" y2="605" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="520" y="575" width="190" height="60" rx="8" fill="var(--amber-bg)" stroke="var(--amber-border)" stroke-width="1.5"/>
+    <text x="615" y="597" text-anchor="middle" font-size="10.5" font-weight="700" fill="var(--amber-label)">DAC</text>
+    <text x="615" y="613" text-anchor="middle" font-size="9" fill="var(--amber-note)">palette entry -&gt; 18-bit</text>
+    <text x="615" y="626" text-anchor="middle" font-size="9" fill="var(--amber-note)">RGB, out as analog</text>
+
+    <line x1="710" y1="605" x2="748" y2="605" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="750" y="575" width="90" height="60" rx="8" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="795" y="600" text-anchor="middle" font-size="10" font-weight="700" fill="var(--box-text)">Monitor</text>
+    <text x="795" y="616" text-anchor="middle" font-size="8.5" fill="var(--box-text)">analog</text>
+
+    <!-- CRTC ties into this pipeline too, as the clock that drives which pixel is "now" -->
+    <path d="M155,575 L155,555 L108,555 L108,401" fill="none" stroke="var(--dashed-line)" stroke-width="1.25" stroke-dasharray="4,3" marker-end="url(#arrow-dashed)"/>
+    <text x="150" y="548" font-size="8.5" fill="var(--fg-subtitle)">CRTC's raster timing paces every step of this pipeline</text>
+
+    <!-- Footer -->
+    <line x1="70" y1="672" x2="830" y2="672" stroke="var(--footer-line)" stroke-width="1"/>
+    <text x="450" y="696" text-anchor="middle" font-size="12" fill="var(--footer-text)" font-weight="600">Three of the five blocks share one access pattern: an index port picks a register, a data port writes it</text>
+    <text x="450" y="716" text-anchor="middle" font-size="11" fill="var(--footer-subtext)">CRTC, Sequencer, and Graphics Controller each use this index/data pair; the Attribute Controller collapses it into one port</text>
+    <text x="450" y="734" text-anchor="middle" font-size="11" fill="var(--footer-subtext)">and the DAC uses three ports because a color needs three consecutive byte writes (red, then green, then blue)</text>
+
+    <text x="450" y="764" text-anchor="middle" font-size="10.5" fill="var(--orange-footnote)" font-style="italic">on real 1987 silicon these were separate manufactured components on one PCB — the register map was the only thing holding the network together</text>
+    <text x="450" y="782" text-anchor="middle" font-size="10.5" fill="var(--fg-subtitle)" font-style="italic">each I/O port above has its own entry in DOSBox-X's flat io_writehandlers table (Chapter 2, §2.4) — this diagram omits the read-side ports</text>
+</svg>

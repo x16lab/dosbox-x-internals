@@ -1,0 +1,63 @@
+---
+interface Props {
+  title?: string;
+  caption?: string;
+}
+
+const { title, caption } = Astro.props;
+---
+
+<figure class="memory-map">
+  {title && <figcaption>{title}</figcaption>}
+  <div class="map-visual">
+    <slot />
+  </div>
+  {caption && <p class="map-caption">{caption}</p>}
+</figure>
+
+<style>
+  .memory-map {
+    margin: calc(var(--baseline) * 1.5) 0;
+    border: var(--hairline);
+    background: var(--color-surface);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+  }
+
+  .memory-map figcaption {
+    padding: 0.75rem var(--baseline);
+    border-bottom: var(--hairline);
+    color: var(--color-accent);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .map-visual {
+    padding: var(--baseline);
+    overflow-x: auto;
+  }
+
+  .map-visual :global(pre) {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+
+  .map-visual :global(.region) {
+    color: var(--color-accent);
+  }
+
+  .map-caption {
+    margin: 0;
+    padding: 0.6rem var(--baseline);
+    border-top: var(--hairline);
+    color: var(--color-muted);
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    font-style: italic;
+  }
+</style>

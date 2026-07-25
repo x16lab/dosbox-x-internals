@@ -1,0 +1,86 @@
+---
+interface Props {
+  label?: string;
+  /** Optional: override the visible alignment of the button. */
+  align?: 'left' | 'right';
+  /**
+   * `page`   — prints the whole page (used on single-chapter pages).
+   * `section` — prints only the enclosing chapter section (used on the
+   *             all-in-one reader, so each chapter prints on its own).
+   */
+  scope?: 'page' | 'section';
+}
+
+const { label = 'Print / Save as PDF', align = 'right', scope = 'page' } = Astro.props;
+---
+
+<button type="button" class="print-chapter-btn" data-print-chapter data-print-scope={scope} data-align={align}>
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="6 9 6 2 18 2 18 9"></polyline>
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+    <rect x="6" y="14" width="12" height="8"></rect>
+  </svg>
+  {label}
+</button>
+
+<style>
+  .print-chapter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 1.5rem;
+    padding: 0.55rem 1.1rem;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--color-accent, #b5490f);
+    background: transparent;
+    border: 1px solid var(--color-accent, #b5490f);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .print-chapter-btn:hover {
+    background: var(--color-accent, #b5490f);
+    color: #fff;
+  }
+
+  .print-chapter-btn[data-align='right'] {
+    float: right;
+  }
+
+  @media print {
+    .print-chapter-btn {
+      display: none;
+    }
+  }
+</style>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-print-chapter]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.printScope === 'section') {
+        const section =
+          btn.closest<HTMLElement>('[data-chapter-id]') ?? btn.closest<HTMLElement>('.reader-chapter');
+        if (!section) {
+          window.print();
+          return;
+        }
+        section.setAttribute('data-printing', '');
+        document.body.classList.add('print-single-chapter');
+        const restore = () => {
+          section.removeAttribute('data-printing');
+          document.body.classList.remove('print-single-chapter');
+          window.removeEventListener('afterprint', restore);
+        };
+        window.addEventListener('afterprint', restore);
+        window.print();
+        // Fallback for browsers that don't fire afterprint reliably.
+        setTimeout(restore, 500);
+      } else {
+        window.print();
+      }
+    });
+  });
+</script>

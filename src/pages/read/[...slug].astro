@@ -1,0 +1,59 @@
+---
+import { getCollection, render } from 'astro:content';
+import BookLayout from '../../layouts/BookLayout.astro';
+import PrintChapter from '../../components/book/PrintChapter.astro';
+
+export async function getStaticPaths() {
+  const chapters = await getCollection('book');
+  return chapters
+    .filter((entry) => !entry.data.draft)
+    .map((entry) => {
+      const slug = entry.data.chapterSlug || entry.id.replace(/\.mdx?$/, '');
+      return { params: { slug } };
+    });
+}
+
+const { slug } = Astro.params;
+
+const chapters = (await getCollection('book'))
+  .filter((entry) => !entry.data.draft)
+  .sort((a, b) => a.data.order - b.data.order);
+
+const entry = chapters.find(
+  (c) => (c.data.chapterSlug || c.id.replace(/\.mdx?$/, '')) === slug
+);
+
+if (!entry) {
+  return Astro.redirect('/404');
+}
+
+const currentIndex = chapters.findIndex((c) => c.id === entry.id);
+const prevEntry = currentIndex > 0 ? chapters[currentIndex - 1] : null;
+const nextEntry = currentIndex < chapters.length - 1 ? chapters[currentIndex + 1] : null;
+
+const { Content } = await render(entry);
+
+const chapterTitle = entry.data.title;
+
+const prevNav = prevEntry
+  ? { slug: prevEntry.data.chapterSlug || prevEntry.id.replace(/\.mdx?$/, ''), title: prevEntry.data.title }
+  : null;
+
+const nextNav = nextEntry
+  ? { slug: nextEntry.data.chapterSlug || nextEntry.id.replace(/\.mdx?$/, ''), title: nextEntry.data.title }
+  : null;
+---
+
+<BookLayout
+  title={chapterTitle}
+  description={entry.data.description}
+  ogType="article"
+  chapterTitle={chapterTitle}
+  prevChapter={prevNav}
+  nextChapter={nextNav}
+>
+  <article class="book-article">
+    <PrintChapter />
+    <Content />
+  </article>
+</BookLayout>

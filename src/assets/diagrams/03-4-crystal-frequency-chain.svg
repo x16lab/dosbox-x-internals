@@ -1,0 +1,171 @@
+<svg viewBox="0 0 1000 760" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+<defs>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+
+    --box-bg: #f3f4f6;
+    --box-border: #9ca3af;
+    --box-text: #374151;
+
+    --dashed-line: #6b7280;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-bg: #3a2413;
+    --orange-border: #fb923c;
+    --orange-label: #fdba74;
+    --orange-code: #fed7aa;
+    --orange-footnote: #fdba74;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+
+    --box-bg: #1f2937;
+    --box-border: #94a3b8;
+    --box-text: #e5e7eb;
+
+    --dashed-line: #94a3b8;
+}
+
+.label { font-weight: 700; font-size: 16px; }
+.code  { font-family: Consolas, Menlo, monospace; font-size: 13px; }
+.note  { font-size: 11px; }
+.div   { font-weight: 700; font-size: 13px; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+</defs>
+
+<!-- Title -->
+<text x="500" y="32" text-anchor="middle" fill="var(--fg-title)" font-size="22" font-weight="700">Crystal Frequency Division Chain</text>
+<text x="500" y="54" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13" font-family="Consolas, Menlo, monospace">one 14.31818 MHz oscillator, divided three times, ending in an accident: 18.2065 Hz</text>
+
+<!-- Node 1: crystal -->
+<rect x="330" y="76" width="340" height="86" rx="10" fill="var(--box-bg)" stroke="var(--box-border)"/>
+<text x="500" y="102" text-anchor="middle" class="label" fill="var(--box-text)">14.31818 MHz</text>
+<text x="500" y="122" text-anchor="middle" class="code" fill="var(--box-text)">ISA oscillator crystal</text>
+<text x="500" y="140" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">= 4 × NTSC color subcarrier (3.579545 MHz)</text>
+<text x="500" y="155" text-anchor="middle" class="note" fill="var(--footer-subtext)">codebase: clockdom_ISA_OSC(NTSC_COLOR_SUBCARRIER_NUM*4, ...)  — dosbox.cpp:276</text>
+
+<path d="M500,162 L500,192" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="455" y="168" width="90" height="24" rx="12" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="500" y="185" text-anchor="middle" class="div" fill="var(--indigo-label)">÷ 3</text>
+
+<!-- Node 2: CPU CLK -->
+<rect x="330" y="196" width="340" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="500" y="222" text-anchor="middle" class="label" fill="var(--indigo-label)">4.772727 MHz — CPU CLK</text>
+<text x="500" y="242" text-anchor="middle" class="code" fill="var(--indigo-code)">8088 clock input (8284A pin CLK)</text>
+<text x="500" y="260" text-anchor="middle" class="note" fill="var(--indigo-note)" font-style="italic">the original 8088's rated speed — Turbo-disengaged baseline</text>
+<text x="500" y="276" text-anchor="middle" class="note" fill="var(--indigo-note)">codebase: clockdom_ISA_BCLK = ISA_OSC / 3  — dosbox.cpp:1372</text>
+
+<path d="M500,286 L500,316" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="455" y="292" width="90" height="24" rx="12" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="500" y="309" text-anchor="middle" class="div" fill="var(--indigo-label)">÷ 4</text>
+<text x="620" y="309" text-anchor="middle" class="note" fill="var(--indigo-note)" font-style="italic">(PCLK = CLK÷2, then PIT input = PCLK÷2)</text>
+
+<!-- Node 3: PIT input -->
+<rect x="330" y="320" width="340" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="500" y="346" text-anchor="middle" class="label" fill="var(--indigo-label)">1.193182 MHz — PIT input</text>
+<text x="500" y="366" text-anchor="middle" class="code" fill="var(--indigo-code)">8253/8254 PIT channel-0 clock</text>
+<text x="500" y="384" text-anchor="middle" class="note" fill="var(--indigo-note)" font-style="italic">net ÷12 from crystal — one motherboard trace saves a second oscillator</text>
+<text x="500" y="400" text-anchor="middle" class="code" fill="var(--indigo-code)">#define PIT_TICK_RATE_IBM 1193182  — include/timer.h:25</text>
+
+<path d="M500,410 L500,440" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="440" y="416" width="120" height="24" rx="12" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="500" y="433" text-anchor="middle" class="div" fill="var(--orange-label)">÷ 65536</text>
+
+<!-- Node 4: system tick -->
+<rect x="290" y="444" width="420" height="100" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="500" y="470" text-anchor="middle" class="label" fill="var(--orange-label)">18.2065 Hz — system timer tick</text>
+<text x="500" y="490" text-anchor="middle" class="code" fill="var(--orange-code)">IRQ0 / INT 8, BIOS tick counter (0040:006C)</text>
+<text x="500" y="508" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">count=0 in PIT mode 0/2 means the max 16-bit count, 65536 — the</text>
+<text x="500" y="524" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">slowest rate the hardware could produce, not a chosen design target</text>
+
+<!-- Side annotation: which subsystem uses which stage -->
+<g>
+  <path d="M670,120 L820,120" fill="none" stroke="var(--dashed-line)" stroke-width="1.3" stroke-dasharray="4,3"/>
+  <rect x="820" y="88" width="150" height="64" rx="8" fill="var(--box-bg)" stroke="var(--box-border)"/>
+  <text x="895" y="106" text-anchor="middle" class="note" font-weight="700" fill="var(--box-text)">shared with:</text>
+  <text x="895" y="122" text-anchor="middle" class="note" fill="var(--box-text)">OPL / Tandy sound clock</text>
+  <text x="895" y="136" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">(same crystal, ÷4 —</text>
+  <text x="895" y="148" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">separate branch, not the PIT chain)</text>
+
+  <path d="M670,240 L820,240" fill="none" stroke="var(--dashed-line)" stroke-width="1.3" stroke-dasharray="4,3"/>
+  <rect x="820" y="208" width="150" height="64" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+  <text x="895" y="226" text-anchor="middle" class="note" font-weight="700" fill="var(--indigo-label)">used by:</text>
+  <text x="895" y="242" text-anchor="middle" class="note" fill="var(--indigo-code)">CPU core / Normal_Loop's</text>
+  <text x="895" y="256" text-anchor="middle" class="note" fill="var(--indigo-code)">cycle budgeting (Ch. 3)</text>
+
+  <path d="M670,364 L820,364" fill="none" stroke="var(--dashed-line)" stroke-width="1.3" stroke-dasharray="4,3"/>
+  <rect x="820" y="332" width="150" height="64" rx="8" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+  <text x="895" y="350" text-anchor="middle" class="note" font-weight="700" fill="var(--indigo-label)">used by:</text>
+  <text x="895" y="366" text-anchor="middle" class="note" fill="var(--indigo-code)">PIC_TICK_RATE_IBM,</text>
+  <text x="895" y="380" text-anchor="middle" class="note" fill="var(--indigo-code)">PC speaker, IPX timing</text>
+
+  <path d="M710,494 L820,494" fill="none" stroke="var(--dashed-line)" stroke-width="1.3" stroke-dasharray="4,3"/>
+  <rect x="820" y="462" width="150" height="64" rx="8" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+  <text x="895" y="480" text-anchor="middle" class="note" font-weight="700" fill="var(--orange-label)">used by:</text>
+  <text x="895" y="496" text-anchor="middle" class="note" fill="var(--orange-code)">DOS/BIOS clock, any TSR</text>
+  <text x="895" y="510" text-anchor="middle" class="note" fill="var(--orange-code)">or game hooking IRQ0</text>
+</g>
+
+<!-- Turbo button footnote box -->
+<rect x="80" y="444" width="190" height="100" rx="10" fill="var(--box-bg)" stroke="var(--box-border)" stroke-dasharray="5,3"/>
+<text x="175" y="466" text-anchor="middle" class="note" font-weight="700" fill="var(--box-text)">cycles= / Turbo button</text>
+<text x="175" y="484" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">doesn't touch this chain —</text>
+<text x="175" y="500" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">throttles how many CPU</text>
+<text x="175" y="516" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">cycles run per fixed tick,</text>
+<text x="175" y="532" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">not the tick rate itself</text>
+<path d="M270,494 L288,470" fill="none" stroke="var(--dashed-line)" stroke-width="1.3" stroke-dasharray="4,3"/>
+
+<!-- Footer -->
+<line x1="70" y1="580" x2="930" y2="580" stroke="var(--footer-line)"/>
+<text x="500" y="606" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">Three unrelated engineering decisions compounded into one number nobody targeted: 18.2065 Hz.</text>
+<text x="500" y="628" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">Sharing one crystal across video and CPU timing was a cost-saving trick (one oscillator, several divisions) — not a plan to fix the interrupt rate.</text>
+<text x="500" y="650" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">Once DOS, BIOS timekeeping, and IRQ0-hooking software all assumed 18.2065 Hz, it became a compatibility constant every PC-compatible has preserved since.</text>
+<text x="500" y="676" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">Codebase references verified against joncampbell123/dosbox-x @ 192c1756 — include/timer.h and src/dosbox.cpp (ISA OSC/BCLK clock domains).</text>
+
+</svg>

@@ -1,0 +1,394 @@
+---
+title: "DMA and the PIT"
+description: "How DOSBox-X models the 8237 DMA controller for CPU-bypassing memory transfers, and the PIT's channels 1 and 2 — including channel 2's role driving the PC speaker for both simple beeps and crude PWM digitized audio playback."
+order: 11
+chapterSlug: "dma-and-pit"
+part: "devices"
+---
+# Chapter 11 — DMA and the PIT {#chapter-11-dma-and-the-pit}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations. Game driver code quoted in @section(dma-and-pit/the-8237-taking-turns-on-the-bus) is from id Software's 1995 DOS source release of Wolfenstein 3D, `id-Software/wolf3d`, files `WOLFSRC/ID_SD_A.ASM` and `WOLFSRC/ID_SD.C`.)*
+
+## 11.1 The Moment the CPU Was No Longer Enough {#the-moment-the-cpu-was-no-longer-enough}
+
+The IBM PC began with a simple assumption: the CPU does the work, and devices wait. The 8088 executes an instruction, reads a byte, writes a byte, and moves on.
+
+That model works for a keyboard. It works for text. It works for a floppy command here and there. In each case the CPU has time to spare — a keypress arrives every few hundred milliseconds of human reaction time, a printed character is consumed by a reader far slower than the CPU can produce it, and a floppy command is a single, occasional dispatch rather than a demand for continuous throughput. Servicing one byte at a time costs nothing when the byte only shows up once in a while.
+
+It breaks down when a device needs a continuous stream.
+
+Put a number on it. Servicing a byte through an interrupt isn't just the instruction that moves the byte — it's the full interrupt path: the CPU finishes its current instruction, pushes flags and a return address onto the stack, vectors into the handler, the handler saves whatever registers it's about to clobber, does the actual one- or two-instruction transfer, restores those registers, and executes `IRET` to resume where it left off. On an 8088 that round trip runs to several dozen clock cycles before a single byte of useful work happens — call it on the rough order of 50-100 cycles of pure overhead, separate from the transfer itself. At a 4.77 MHz clock, an interrupt firing once every few hundred milliseconds for a keypress is statistically free; that overhead is a rounding error against billions of otherwise-available cycles.
+
+An 11 kHz, 8-bit audio stream is a different arithmetic problem entirely. It needs a new byte roughly every 90 microseconds — not once in a while, but continuously, for as long as playback runs. At 4.77 MHz that's on the order of 400-450 clock cycles between samples, and if 50-100 of those are consumed just entering and leaving an interrupt handler, a meaningful fraction of the entire CPU budget is gone before the byte is even copied — and that's before the handler does anything else, like updating a buffer pointer or checking for the end of the sample. Push the sample rate up, or run on a slower or more heavily loaded system, and the math stops working: the interrupt handler needs to return before the next byte is due, or samples get dropped and the audio glitches. The CPU isn't too slow to move the bytes; the overhead of moving them one at a time, with a full interrupt frame around every single byte, is what eats the margin.
+
+The arithmetic above is only half the problem, and it's the half that goes away if you're willing to let the CPU do nothing else. The other half doesn't go away: a floppy controller reading a sector does not care that the CPU is in the middle of drawing a screen, and a sound card mid-playback does not care that the CPU has a keypress to handle. Programmed I/O doesn't just cost cycles — it costs the CPU's *undivided* attention for as long as the stream runs, and undivided attention is exactly what a system trying to draw graphics, read input, and play sound at the same time can't afford to give up.
+
+The solution was to give selected hardware a way to temporarily become a participant on the system bus.
+
+That solution was DMA.
+
+## 11.2 The 8237: Taking Turns on the Bus {#the-8237-taking-turns-on-the-bus}
+
+### Before DOSBox-X {#before-dosbox-x}
+
+The 8237 was not a faster `memcpy` routine. It was a small bus controller — a second participant that could briefly take ownership of the same address and data lines the CPU normally drove.
+
+When a peripheral needed a block transfer, the hardware danced through six steps the CPU never explicitly managed:
+
+1. The device raises its DMA Request (DRQ) line.
+2. The 8237 sees the request and asserts Hold Request (HRQ) to the CPU.
+3. The CPU finishes its current bus cycle, floats its address/data buses to high-impedance, and asserts Hold Acknowledge (HLDA).
+4. The 8237 drives the memory address onto the bus and asserts the appropriate read/write strobes.
+5. One byte (or word) moves directly between memory and the device, with no instruction decode, no segment translation, no microcode.
+6. The 8237 releases the bus; the CPU resumes as if nothing happened.
+
+A picture helps. Before DMA, every byte through the system followed one path:
+
+```
+            CPU
+             |
+      +------+------+
+      |             |
+   Memory        Device
+```
+
+With DMA, the CPU and the 8237 took turns:
+
+```
+              CPU
+               |
+               |
+        +------+------+
+        | System Bus  |
+        +------+------+
+          |        |
+        8237     Memory
+          |
+       Device
+```
+
+The 8237 did not behave like a software copy routine. It generated the addresses and bus control signals that allowed the peripheral and memory to exchange data directly. Its speed came from stripping away everything a full CPU instruction cycle requires: no fetch, no decode, no ALU, no commit.
+
+### The Emulator's Problem: Recreating DMA Without a Bus {#the-emulator-s-problem-recreating-dma-without-a-bus}
+
+A real 8237 controlled electrical signals. It asserted HRQ, watched HLDA, drove address pins high or low, and strobed read/write lines at specific moments in the clock cycle.
+
+DOSBox-X has no physical bus to take ownership of. It cannot reproduce HRQ and HLDA electrically; it must reproduce the observable results of those handshakes. What it *can* do is model the *consequences* of DMA — the observable behavior a real 8237 produces — without needing to reproduce the electrical timing that produced those effects on real silicon:
+
+- **Independent access to physical memory** — the DMA path reads and writes RAM through `phys_readb()`/`phys_readw()`, the same physical memory the CPU core uses, but reached without going through any instruction fetch or decode.
+- **Channel ownership** — at any given time, a channel belongs to exactly one device (the floppy controller, the Sound Blaster, etc.), mirroring the real chip's fixed wiring.
+- **Transfer direction** — the 8237 had separate read and write transfer modes, and the emulated channel enforces them.
+- **Address wrapping rules** — the real chip's 16-bit address counter with no carry into the page register means every transfer must be clipped at a page boundary; the emulator reproduces the same overall boundary, though (as @section(dma-and-pit/how-a-device-actually-uses-a-channel) details) it does so internally in smaller 4 KB steps rather than in one 64 KB pass.
+- **Terminal count events** — when the transfer count reaches zero, the 8237 signals the device, and DOSBox-X fires a `DMA_REACHED_TC` callback so the device knows the block is done.
+
+None of these require asserting HRQ. They only require modeling what the 8237 *did* once it had the bus.
+
+### Source map for this chapter {#source-map-for-this-chapter}
+
+| Hardware concept | DOSBox-X location |
+|---|---|
+| DMA controller | `include/dma.h`, `src/hardware/dma.cpp` |
+| PIT counters | `src/hardware/timer.cpp` |
+| Speaker control | `src/hardware/pcspeaker.cpp` |
+| Port `0x61` interface | `src/hardware/keyboard.cpp` |
+
+With that bridge crossed, the source code becomes legible in exactly the right order. DOSBox-X reflects the real hardware's own scaling decision directly in its data structures. A single 8237 only has four channels, and PC/XT-class machines only had one chip — but AT-class machines and everything after added a second, cascaded 8237 for wider 16-bit transfers, the same "two chips, one primary and one extension" shape @chapter(interrupts-exceptions-pic) already covered for interrupts:
+
+```cpp
+DmaController *DmaControllers[2]={NULL};
+```
+
+`DmaControllers[0]` handles the original 8-bit channels 0–3; `DmaControllers[1]` handles the 16-bit channels 4–7, and channel lookups route between them automatically:
+
+```cpp
+if (chan<4) { if (DmaControllers[0]) return DmaControllers[0]->GetChannel(chan); }
+else        { if (DmaControllers[1]) return DmaControllers[1]->GetChannel(chan-4); }
+```
+
+### PIO and DMA, Side by Side: A Real Driver {#pio-and-dma-side-by-side-a-real-driver}
+
+@section(dma-and-pit/the-moment-the-cpu-was-no-longer-enough)'s arithmetic is easier to trust with real code in front of it. id Software released Wolfenstein 3D's DOS source in 1995, and its sound driver (`ID_SD_A.ASM`, `ID_SD.C`) happens to contain both patterns this chapter is contrasting — programmed I/O and 8237 DMA — for two different pieces of *the same kind* of hardware: digitized sample playback. Neither snippet below is hypothetical; both are the actual shipped driver.
+
+**The PIO path** plays samples through the Disney Sound Source, a device that hangs digitized audio off the printer port with no DMA capability at all — every sample byte has to be walked across the bus by the CPU itself. The driver does this from inside `SDL_t0SlowAsmService`, the PIT-driven timer interrupt handler that already runs 140 times a second for game timing:
+
+```asm
+@@ssloop:
+	mov	dx,[ssStatus]			; Check to see if FIFO has any empty slots
+	in	al,dx
+	test al,40h
+	jnz	@@ssdone				; Nope - don't push any more data out
+
+	mov	dx,[ssData]
+	mov	al,[es:di]				; al = *ssSample
+	out	dx,al					; Pump the value out
+
+	mov	dx,[ssControl]			; Pulse printer select
+	mov	al,[ssOff]
+	out	dx,al
+	push ax
+	pop	ax
+	mov	al,[ssOn]
+	out	dx,al
+
+	push ax						; Delay a short while
+	pop	ax
+
+	inc	di
+	mov	[WORD PTR ssSample],di	; ssSample++
+
+	dec	[ssLengthLeft]
+	jnz @@ssloop
+```
+
+Every single byte costs an `in` to poll the device's FIFO status, an `out` to write the sample, two more `out`s to pulse a strobe line, and a handful of instructions to advance the pointer and loop — on the order of a dozen instructions, entirely separate from whatever the timer ISR was already doing for game logic that tick. This is exactly the cost @section(dma-and-pit/the-moment-the-cpu-was-no-longer-enough) worked out in cycles: real code, still inside an interrupt handler, spending its time shuttling one byte before it can even think about returning.
+
+**The DMA path**, a few hundred lines away in the same driver, plays samples through the Sound Blaster instead. `SDL_SBPlaySeg()` doesn't touch the sample data at all — it programs the 8237 once and walks away:
+
+```c
+// Program the DMA controller
+asm	pushf
+asm	cli
+	outportb(0x0a,sbDMA | 4);			// Mask off DMA on channel sbDMA
+	outportb(0x0c,0);					// Clear byte ptr flip-flop to lower byte
+	outportb(0x0b,0x49);				// Set transfer mode for D/A conv
+	outportb(sbDMAa2,(byte)dataofs);		// Give LSB of address
+	outportb(sbDMAa2,(byte)(dataofs >> 8));	// Give MSB of address
+	outportb(sbDMAa1,(byte)datapage);		// Give page of address
+	outportb(sbDMAa3,(byte)uselen);		// Give LSB of length
+	outportb(sbDMAa3,(byte)(uselen >> 8));	// Give MSB of length
+	outportb(0x0a,sbDMA);				// Re-enable DMA on channel sbDMA
+
+	// Start playing the thing
+	sbWriteDelay();
+	sbOut(sbWriteCmd,0x14);
+	sbWriteDelay();
+	sbOut(sbWriteData,(byte)uselen);
+	sbWriteDelay();
+	sbOut(sbWriteData,(byte)(uselen >> 8));
+asm	popf
+```
+
+Every one of those `outportb` calls lands on exactly the 8237 registers this chapter has already named, in the same order the datasheet expects — and DOSBox-X's own `WriteControllerReg()` switch confirms them one for one: `0x0a` is the mask register (`case 0xa: /* Mask Register */`), `0x0c` is the flip-flop clear (`case 0xc: /* Clear Flip/Flip */`), `0x0b` is the mode register (`case 0xb: /* Mode Register */`), and `sbDMAa1`/`sbDMAa2`/`sbDMAa3` resolve (for DMA channel 1, the default `sbDMA`) to ports `0x83`, `0x02`, and `0x03` — which line up exactly with DOSBox-X's own page-register dispatch, `case 0x83: GetDMAChannel(1)->SetPage(...)`. This isn't a coincidence; both the game and the emulator are talking to the same real chip's register layout, decades apart. Command `0x14` sent to the DSP afterward is the single-cycle 8-bit DMA playback command — it tells the Sound Blaster "start pulling bytes from whatever the 8237 has been told," and from that point on, the CPU is out of the loop entirely.
+
+That's the whole saving, visible at the instruction level: the PIO version pays a poll-and-transfer cost *per sample*, forever, for as long as playback runs. The DMA version pays a fixed setup cost of about a dozen `outportb`/`sbOut` calls *once per buffer*, and the interrupt handler that follows — `SDL_SBService()` — only fires when the entire buffer segment is exhausted, not once per byte:
+
+```c
+static void interrupt
+SDL_SBService(void)
+{
+	sbIn(sbDataAvail);	// Ack interrupt to SB
+
+	if (sbNextSegPtr)
+	{
+		used = SDL_SBPlaySeg(sbNextSegPtr,sbNextSegLen);
+		...
+	}
+	...
+}
+```
+
+Compare the two loops directly: the PIO version's `@@ssloop` runs once per sample, at whatever rate the sound needs; `SDL_SBService` runs once per *buffer*, however many thousand samples long that buffer is. The time saved isn't "DMA moves bytes faster than the CPU can" — a modern reader's first guess — it's that the CPU stops being invoked at the sample rate at all. It's invoked at the *buffer* rate, which can be hundreds or thousands of times lower, and every cycle in between belongs entirely to the game.
+
+## 11.3 How a Device Actually Uses a Channel {#how-a-device-actually-uses-a-channel}
+
+A `DmaChannel` (`include/dma.h`) is where the by-now-familiar "any module can register itself into a shared mechanism" pattern shows up a third time, after @chapter(dosbox-x-architecture)'s I/O port table and @chapter(main-loop-and-event-scheduler)'s PIC event queue:
+
+```cpp
+void Register_Callback(DMA_CallBack _cb) {
+    callback = _cb;
+    masked_by = DMAA_REISSUE;
+    SetMask(masked);
+    if (callback) Raise_Request();
+    else Clear_Request();
+}
+```
+
+A device — the Sound Blaster code, say — calls `Register_Callback()` once to claim a channel, and from then on gets notified through a small, deliberately minimal event set:
+
+```cpp
+enum DMAEvent {
+    DMA_REACHED_TC,   // transfer count reached zero
+    DMA_MASKED,       // channel was masked (disabled) by the guest
+    DMA_UNMASKED,     // channel was unmasked (enabled) by the guest
+};
+```
+
+The actual byte-shuffling happens through `Read()`/`Write()`, which a device calls whenever it's ready to consume or produce data:
+
+```cpp
+Bitu DmaChannel::Read(Bitu want, uint8_t * buffer) {
+    if (masked) { /* ...refuse, log a warning... */ }
+    if (transfer_mode != DMAT_READ) { /* ...refuse, this channel wasn't configured for it... */ }
+    ...
+    while (want > 0) {
+        const Bitu cando = MIN(MIN(want, Bitu(currcnt+1u)), wrapdo);
+        DMA_BlockRead4KB<DMA_INCREMENT>(pagebase,curraddr,buffer,cando,DMA16,DMA16_ADDRMASK);
+        curraddr += (uint32_t)cando;
+        currcnt -= (uint16_t)cando;
+        ...
+    }
+}
+```
+
+### The Strange Software Rules Created by Hardware Limits {#the-strange-software-rules-created-by-hardware-limits}
+
+One of the most interesting consequences of DMA is that hardware limitations became software conventions. A DOS programmer did not simply allocate an audio buffer — they allocated a *DMA-safe* buffer, and they learned the rule without ever seeing it written down as a compiler error or a linker message.
+
+The problem lives in three variables visible in the `Read()` loop above:
+
+- `wrapdo` — clips every transfer so it never crosses a page boundary within a single block operation.
+- `pagebase` — the upper address bits, latched from a separate external register the real 8237 could not update automatically.
+- `curraddr` — the running 16-bit address within the current page.
+
+The underlying hardware reality: the 8237 only generated 16 address bits itself. The upper bits came from a separate 8-bit page-latch register wired externally, and if a transfer's address counter wrapped past 0xFFFF, the chip had no electrical path to carry that carry into the page register. The counter would silently roll over and the DMA would read or write the wrong physical address.
+
+No operating system caught this. No linker warned. It was a buffer-allocation convention every DOS programmer simply had to know, and the only failure mode was intermittent corruption during audio playback or disk I/O — the kind of bug that took weeks to track down.
+
+DOSBox-X's reproduction of this is worth a closer look, because the source code is candid about cutting a corner on the way there. The `addrmask` that actually clips each `Read()`/`Write()` chunk is not the 64 KB a page-relative address counter would suggest:
+
+```cpp
+const uint32_t addrmask = 0xFFFu >> DMA16; /* 16-bit ISA style DMA needs 0x7FFF, else 0xFFFF. Use 0x7FF/0xFFF (4KB) for simplicity reasons. */
+```
+
+That comment is the emulator admitting it: a real 8237 transfer wraps at a 64 KB boundary (128 KB on the 16-bit channels), but DOSBox-X's inner loop clips every chunk at 4 KB instead, "for simplicity." The full boundary guest software actually depends on is restored one layer up — a separate `dma_wrapping` mask (0xFFFF by default) is applied to `curraddr` after every 4 KB-safe chunk, and the surrounding `while (want > 0)` loop simply runs again for the next chunk. The net effect across a whole transfer matches real hardware; the 4 KB figure is an artifact of how the loop re-enters itself, not a second wrapping boundary DOS programmers ever had to think about. It's a good example of the emulator getting the guest-visible behavior right by a different mechanical route than the datasheet suggests — two separate pieces of code cooperating to put the boundary back where real hardware actually had it.
+
+Not every part of DOSBox-X's DMA model treats that page-register carry as universally unbridgeable, either. `DmaChannel::page_bank_increment()` (`include/dma.h`) exists specifically to auto-increment the page register on wraparound — but it's wired up only `if (IS_PC98_ARCH)`:
+
+```cpp
+void page_bank_increment(void) { // to be called on DMA wraparound
+    if (page_bank_increment_wraparound != 0u) {
+        // Currently this code assumes that the auto increment in PC-98 modifies the
+        // register value (and therefore visible to the guest).
+        ...
+    }
+}
+```
+
+NEC's PC-98 DMA hardware closed the gap IBM's never did: its page register carries automatically when the address counter wraps, and a source comment ties this directly to a specific compatibility need — PC-98 Sim City 2000's digitized speech depends on it. The "DMA-safe buffer" folklore this section just described, in other words, is an IBM-PC-specific story. DOSBox-X models the PC-98 side as a genuinely different chip behavior, not a milder version of the same limitation.
+
+A second detail in the same loop is worth noticing next. Look at what actually moves the bytes: `DMA_BlockRead4KB` calls `phys_readb()`/`phys_readw()` directly — physical memory access, with no segment translation and no CPU decode loop involved at all. This is the concrete payoff of @section(dma-and-pit/the-moment-the-cpu-was-no-longer-enough)'s claim: a DMA transfer genuinely doesn't run through @chapter(interpreter-core)'s interpreter or @chapter(dynamic-recompilation)'s compiled cache blocks. It's a second, independent path into the same physical memory those CPU cores read and write, exactly mirroring how a real 8237 was wired directly to the system's address and data bus as its own bus master, stealing cycles the CPU never had to grant one instruction at a time.
+
+## 11.4 The Forgotten Half of the Timer {#the-forgotten-half-of-the-timer}
+
+DMA solved the problem of moving data without the CPU. The PIT solved the opposite problem: making the passage of time predictable.
+
+The IBM PC needed clocks everywhere — scheduling, DRAM refresh timing, sound generation. The designers did not create separate timer chips for every purpose. They created one chip with three independent countdown counters sharing a single input clock, and wired each output to a completely different destination:
+
+- **Channel 0** became the heartbeat — the 18.2 Hz interrupt that @chapter(interrupts-exceptions-pic) and @chapter(main-loop-and-event-scheduler) already traced from a television colorburst crystal through the 8259 PIC to DOSBox-X's scheduler.
+- **Channel 1** became invisible infrastructure — wired on real IBM PC/XT hardware to trigger DRAM refresh cycles, a job modern chipsets handle internally, leaving this channel as largely invisible infrastructure.
+- **Channel 2** became the accidental musical instrument — wired not to an interrupt line at all, but to the PC speaker, and capable of everything from a polite BIOS beep to crude digitized speech no engineer in 1981 would have called a design requirement.
+
+One chip, three channels, one shared input clock. DOSBox-X models all three the same way — an array of PIT structures, one per channel, each with its own mode, count, and gate state.
+
+Which channel drives the speaker is worth flagging immediately, because it isn't universal even within DOSBox-X's own scope. On IBM PC-compatible hardware it's channel 2; on NEC's PC-98 architecture it's channel 1 instead:
+
+```cpp
+unsigned int speaker_pit = IS_PC98_ARCH ? 1 : 2;
+```
+
+This is a small detail, but it's a genuine piece of hardware history rather than an arbitrary emulator choice — NEC's PC-98 machines wired their own PPI-equivalent logic differently from the IBM-compatible convention, and DOSBox-X's own speaker-timing code has to ask which architecture it's running before it can even know which PIT channel to watch. `timer.cpp` documents the full swap as a table, and it goes further than the speaker channel alone:
+
+```
+IBM PC/XT/AT      NEC-PC98     Timer
+------------------------------------
+Timer int.        Timer int.   0
+DRAM refresh      Speaker      1
+Speaker           RS-232C clk  2
+```
+
+So it isn't just channels 1 and 2 trading places — PC-98's channel 2, the slot IBM machines use for the speaker, is documented as feeding the clock pin of the 8251 UART that drives COM1's baud rate instead. Three channels, three destinations, and NEC's mapping isn't IBM's shifted over by one; it's a genuinely different assignment of jobs to counters, which is exactly why DOSBox-X can't hardcode "channel 2 is the speaker" anywhere in its timer code and has to keep asking `IS_PC98_ARCH` at every site that cares.
+
+## 11.5 Gating the Speaker: Port `0x61`, and a File-Organization Lesson {#gating-the-speaker-port-0x61-and-a-file-organization-lesson}
+
+A PIT channel programmed for square-wave output doesn't make sound by itself — its output is just a logic-level signal toggling high and low at whatever frequency its count produces. Getting that signal to an actual speaker, and controlling whether it's audible at all, goes through a specific I/O port: `0x61`, two of its bits doing two related but distinct jobs.
+
+At this point a modern programmer might expect a tidy layering: PIT code in one file, speaker gate logic in the next, audio mixing in a third. The IBM PC did not work that way. The speaker was controlled through the same 8255 PPI that handled several unrelated motherboard functions, including the keyboard interface and cassette logic. The designers used spare PPI lines for system control signals such as the PIT gate and speaker enable, so a register that looks unrelated from a modern software perspective ended up controlling audio hardware. Hardware boundaries do not match software boundaries, and this is exactly the kind of seam this book keeps finding.
+
+The consequence lands in DOSBox-X's source tree: the port `0x61` write handler lives in `src/hardware/keyboard.cpp`, not in `pcspeaker.cpp` or `timer.cpp`:
+
+```cpp
+static void write_p61(Bitu, Bitu val, Bitu) {
+    uint8_t diff = port_61_data ^ (uint8_t)val;
+    if (diff & 0x1) TIMER_SetGate2(val & 0x1);
+    if ((diff & 0x3) && !IS_PC98_ARCH) {
+        bool pit_clock_gate_enabled = !!(val & 0x1);
+        bool pit_output_enabled = !!(val & 0x2);
+        PCSPEAKER_SetType(pit_clock_gate_enabled, pit_output_enabled);
+    }
+    port_61_data = val;
+}
+```
+
+This isn't a filing mistake, and it isn't DOSBox-X's own idiosyncrasy — it's a direct reflection of how the real hardware was actually wired. On the original IBM PC, port `0x61` belonged to the 8255 Programmable Peripheral Interface, the same chip that also handled other motherboard control signals; the PIT gate enable (bit 0) and speaker output enable (bit 1) simply happened to share a port with logic that, from a 2020s perspective, looks like it belongs to an entirely unrelated subsystem. DOSBox-X's source layout preserves that coupling rather than tidying it into a more "logical" arrangement, for the same reason @chapter(vga-emulation) found the Attribute Controller's flip-flop shared with an unrelated status register: real hardware didn't organize its registers along the same lines a modern engineer would draw module boundaries, and an emulator faithful to that hardware inherits the same untidy boundaries whether or not they're convenient to file.
+
+The two bits do genuinely different jobs, both visible in `write_p61()`: `TIMER_SetGate2()` controls whether channel 2's counter is even running — the *gate* input every 8253/8254 channel has, which pauses or resumes counting independent of reprogramming the channel entirely — while `PCSPEAKER_SetType()`'s second argument controls whether the counter's output, running or not, is actually connected through to the physical speaker. A period diagnostic trick reads these back indirectly too: port `0x62` bit 5 reflects the PIT's live output level, so a self-test routine could toggle the gate and directly observe channel 2 actually counting, without needing to make a sound at all:
+
+```cpp
+static Bitu read_p62(Bitu, Bitu) {
+    uint8_t ret = uint8_t(~0x20u);
+    if (TIMER_GetOutput2()) ret|=0x20u;
+    return ret;
+}
+```
+
+That trick isn't wired up unconditionally, though — DOSBox-X only registers this handler for a specific set of machine types:
+
+```cpp
+if (machine==MCH_CGA || machine==MCH_HERC || machine==MCH_OLIVETTI || machine==MCH_3270PC)
+    IO_RegisterReadHandler(0x62,read_p62,IO_MB);
+```
+
+That scoping is itself a small piece of hardware history, and another instance of this chapter's running theme: later machine classes (VGA-era PS/2-style systems among them) moved keyboard and status logic off the original discrete PPI and onto integrated keyboard-controller chips that didn't expose this same raw readback port the same way. DOSBox-X doesn't register a fallback for those machine types — matching real hardware, where the diagnostic trick was tied to specific PPI wiring that didn't survive unchanged into later designs.
+
+## 11.6 More Than a Beeper {#more-than-a-beeper}
+
+The PC speaker was never designed to reproduce sound.
+
+That is exactly why its history is interesting.
+
+Channel 2's intended job was benign — programmed into square-wave mode (mode 3), with a count chosen to produce whatever frequency the BIOS or a program wanted, gated on for the duration and off again. A polite system beep, a warning tone, a morse-code-style progress indicator. The chip's datasheet would not have listed "audio playback" anywhere in its application notes.
+
+But programmers discovered something the datasheet did not mention: if you reprogrammed the timer's count at high enough speed, the one-bit speaker output stopped sounding like a single tone and started approximating something closer to recorded sound. The technique was pulse-width modulation — by changing the ratio of on-time to off-time rapidly enough, software could control the average power reaching the speaker cone, creating the illusion of changing volume and approximate waveforms. A single-bit digital output, combined with the physical response of the speaker cone, became a crude analogue sound generator.
+
+No engineer in 1981 would have called this a design requirement. It was an abuse of the hardware in the best sense — using a general-purpose countdown timer for something its designers never anticipated.
+
+DOSBox-X's own source comments preserve this history, in two separate spots in `timer.cpp` worth reading as a pair rather than as one quote. The first sits on the branch handling channel 2 while a new mode is written but the current count hasn't finished:
+
+```cpp
+else if ((p->mode == 2 /*Descent to Undermountain uses Mode 2 and PC speaker PIT as time delay*/ || p->mode == 3) &&
+    (counter == (IS_PC98_ARCH ? 1 : 2))) {
+    // PC speaker
+    PCSPEAKER_SetCounter_NoNewMode(p->cntr);
+```
+
+The second is a few lines further down, on the *different* branch handling modes 0, 1, and 4 — the modes where, per the 8254 datasheet, writing a new count does *not* wait for the current one to finish:
+
+```cpp
+if (p->mode == 0 || p->mode == 1 || p->mode == 4) {
+    /* Mode 0 is the only mode NOT to wait for the current counter to finish if you write another counter value
+     * according to the Intel 8254 datasheet.
+     *
+     * For timer 0 (system timer) this is used by DoWhackaDo as a sort of one-shot timer interrupt.
+     * For timer 2 (PC speaker) this is used to do PWM "realsound" digitized speech in some games. */
+}
+```
+
+The two comments describe two different quirks of channel-2 reprogramming, not one continuous thought — but together they make the same point this section is arguing: DOSBox-X's model has to track *which mode was in effect, and whether a new count was already accepted*, because different games leaned on different corners of that state machine. "Realsound" PWM playback specifically depends on mode 0's write-without-waiting behavior; the emulator cannot model "the PC speaker's job" at a higher level of abstraction and still get this right, because the software was never asking for a tone — it was asking for whatever channel 2's counter, reprogrammed fast enough and in the right mode, would actually do.
+
+### A Bug DOSBox-X Had to Accommodate, Not Fix {#a-bug-dosbox-x-had-to-accommodate-not-fix}
+
+The same file carries a second story, one level up from PWM playback, that makes the point even more sharply: sometimes the "correct" emulation is the one that tolerates a bug in the guest.
+
+*Descent to Undermountain*'s timer interrupt handler has a documented mistake: it requests PIT status for Counter 1, but then reads that status back from Counter 2. A software delay loop elsewhere in the game counts time using Counter 2. On real 8254 hardware, a status read for a counter that wasn't included in the original status-latch command should return the counter's plain count value, not the previously latched status byte — which means, on real hardware, this game's timer ISR logic should never see the delta it's looking for, and the delay loop should never end. As DOSBox-X's own comment puts it, the game "*should* hang during FMV playback on real hardware," unless some machines or later Windows timer virtualization happened to tolerate the mistake anyway.
+
+DOSBox-X's fix is not to detect and correct the game's bug — it's to loosen the emulator's own strictness so the accidental behavior some real systems apparently allowed becomes the default: any I/O read from any counter returns that counter's latched status, even when only a different counter's status was actually requested. That's a direct parallel to this chapter's DMA-safe-buffer story: a real hardware quirk (or a real hardware *tolerance* for a quirk) became a fact of life DOS software silently depended on, and an emulator faithful to the installed base has to reproduce the tolerance, not just the spec.
+
+## 11.7 What Carries Forward {#what-carries-forward}
+
+This chapter's two subjects don't share a register layout or a register-access pattern the way @chapter(vga-emulation)'s four VGA controllers did — the 8237 and the PIT are genuinely different chips solving genuinely different problems. What they share is a more general lesson this book keeps returning to in new forms: **DOSBox-X models the specific chip, not the job the chip was hired to do.** The 8237 isn't modeled as "a fast block-copy helper" — it's modeled as a bus-master with page-register boundary limitations that faithfully constrain how software can use it, because that's what a real 8237 was. PIT channel 2 isn't modeled as "the beep generator" — it's modeled as a general-purpose countdown timer that happens to be wired to a speaker, because that's what it actually was, and that generality is exactly what let period programmers bend it toward crude sample playback nobody designing "a beeper" would have anticipated.
+
+Sound is the natural next stop, and it inherits both subjects this chapter just covered directly: DMA is how a Sound Blaster streams digitized audio without the CPU shuttling every sample by hand, and PIT channel 2 is one input among several — alongside dedicated sound hardware — into the same mixer this book already met once, briefly, in @chapter(host-abstraction-sdl).
+
+---
+
+*Next: @chapter(sound) — Sound, where Sound Blaster DSP command emulation, Gravis UltraSound wavetable synthesis, and MIDI passthrough all build directly on this chapter's DMA machinery and @chapter(host-abstraction-sdl)'s mixer handoff.*

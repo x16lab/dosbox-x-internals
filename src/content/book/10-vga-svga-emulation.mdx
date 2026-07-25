@@ -1,0 +1,328 @@
+---
+title: "VGA/SVGA Emulation"
+description: "How DOSBox-X reproduces the VGA card's five sub-chips (CRTC, Sequencer, Graphics Controller, Attribute Controller, DAC), the planar memory write modes and latch mechanism, the index/data flip-flop trap, the Sequencer registers that select which PageHandler is active (including the chain-4 bit), the DAC's 6-bit compatibility masking, the PageHandler family for framebuffer access, INT 10h as guest code rather than a privileged API, and retrace timing derived lazily from Chapter 4's scheduler clock."
+order: 10
+chapterSlug: "vga-emulation"
+part: "devices"
+---
+
+import Diagram from '../../components/Diagram.astro';
+
+# Chapter 10 — VGA/SVGA Emulation {#chapter-10-vga-svga-emulation}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 10.1 Historical VGA Architecture {#historical-vga-architecture}
+
+Every chapter in Part II was, in a real sense, building toward a moment this chapter finally delivers on. @chapter(memory-model-and-address-translation) introduced `PageHandler` as an abstraction — "any range of memory can be backed by device-specific logic instead of plain RAM" — and used EMS's page frame as its example, but EMS's bank-switching logic is comparatively simple: swap which 16 KB bank a fixed window points at. @chapter(dosbox-x-architecture) described I/O port trapping as a mechanism modules register themselves into, with the Sound Blaster as its running example. VGA is where both of these ideas stop being tidy illustrations and become genuinely complicated, because VGA is where DOS software's appetite for direct hardware access was most demanding. A game didn't ask an OS service to draw a sprite — it computed a memory address and wrote pixels there directly, and it configured the graphics hardware's behavior by writing directly to registers with names like "Data Rotate/Function Select" and "Enable Set/Reset." This chapter is about what DOSBox-X has to do to make that direct access mean the same thing it meant on real 1987-vintage silicon.
+
+What was VGA, as real hardware? The IBM VGA (Video Graphics Array) debuted in 1987 with the IBM PS/2 line, and it was never a single chip. A real VGA card was a printed circuit board connecting several semi-independent functional blocks — the CRT Controller (CRTC), the Sequencer, the Graphics Controller, the Attribute Controller, and the RAMDAC — each manufactured as a separate sub-component, each with its own register set, wired together through a shared bus to a shared bank of video RAM. A DOS program didn't address "the VGA card" as a monolithic device; it wrote to the CRTC's registers to set screen dimensions, to the Sequencer's registers to control clocking and plane access, to the Graphics Controller's registers to configure how CPU writes would be distributed across the four color planes, and to the Attribute Controller's registers to program the palette, all through distinct I/O port ranges. The card was a small network of collaborating subsystems, and the register interface was the only thing holding them together.
+
+For an emulator designer, this fragmented architecture raises an immediate question: should DOSBox-X model VGA as one monolithic device, or mirror the original hardware's division into separate functional blocks?
+
+<Diagram src="vga-subchip-block-diagram.svg" />
+
+## 10.2 The Source Tree as a Map {#the-source-tree-as-a-map}
+
+DOSBox-X answers that question by mirroring the hardware's own division. Following the modularity principle @chapter(dosbox-x-architecture) introduced, VGA emulation isn't one file — it's split across a family of source files, each owning one sub-chip:
+
+```text
+src/hardware/vga.cpp          - top-level state, initialization
+src/hardware/vga_crtc.cpp     - CRTC (timing, cursor, scanline control)
+src/hardware/vga_seq.cpp      - Sequencer (clocking, memory mode, plane masking)
+src/hardware/vga_gfx.cpp      - Graphics Controller (write modes, latches, rotate)
+src/hardware/vga_attr.cpp     - Attribute Controller (palette, blink, overscan)
+src/hardware/vga_dac.cpp      - DAC (256-color palette RAM, RAMDAC)
+src/hardware/vga_memory.cpp   - the framebuffer's PageHandler family
+src/hardware/vga_draw.cpp     - scanline rendering, retrace timing
+```
+
+Real VGA hardware had exactly this shape — the CRTC, sequencer, graphics controller, attribute controller, and DAC were genuinely separate functional blocks on a real PCB, each with its own register set and its own job, wired to a shared bus and a shared bank of video RAM. Understanding the hardware architecture first makes the file listing above feel much less arbitrary: each `.cpp` file corresponds to a real chip that existed on a real PCB, and each file's internal structure — an index register, a data register, a `switch` on register number — mirrors the access pattern that chip exposed to software thirty-five years ago. This chapter follows that same division, one block at a time, before bringing them together at the one place they all ultimately feed: what a program actually sees when it writes a byte to segment `0xA000`.
+
+But knowing which source file corresponds to which chip does not yet explain how a DOS program actually made any of those chips do something. That requires understanding the register-access protocol every block shared.
+
+## 10.3 The Common Pattern: Index/Data Register Pairs {#the-common-pattern-index-data-register-pairs}
+
+Three of the four register blocks this chapter covers — CRTC, Sequencer, and Graphics Controller — share an identical access pattern, and it's worth understanding once rather than three times. Each exposes far more internal registers than it has I/O ports for, so each uses two ports: one to select *which* internal register a following write should target (the index), and one to actually write to it (the data). The CRTC's pair is `0x3D4`/`0x3D5`:
+
+```cpp
+void vga_write_p3d4(Bitu port,Bitu val,Bitu iolen) {
+    crtc(index)=(uint8_t)val;
+}
+
+void vga_write_p3d5(Bitu port,Bitu val,Bitu iolen) {
+    ...
+    switch(crtc(index)) {
+    case 0x00:  /* Horizontal Total Register */
+        ...
+```
+
+A write to `0x3D4` just stores a register number; the *next* write, to `0x3D5`, is dispatched through a `switch` keyed on whatever number was last stored. This is precisely @chapter(dosbox-x-architecture)'s I/O port trapping mechanism (@section(dosbox-x-architecture/how-modules-talk-to-each-other)) — each of these ports has its own entry in the flat `io_writehandlers` table — but layered with a second level of indexing implemented entirely in software, because 256 possible I/O ports was still too few for how many distinct registers a fully-featured graphics card needed to expose. The Sequencer (`0x3C4`/`0x3C5`) and Graphics Controller (`0x3CE`/`0x3CF`) follow the identical shape, each with their own index-then-data pair and their own `switch` statement. Once you've read one of these three, you've effectively read the skeleton of all three — what differs between them is only which specific registers live behind each index.
+
+The index/data pattern explains the mechanics of communication, but not its purpose. Each of the five hardware blocks had a distinct job on the original card, and that job determined which registers lived behind each index.
+
+## 10.4 Hardware Blocks: What Each Sub-Chip Does {#hardware-blocks-what-each-sub-chip-does}
+
+With the register-access pattern established, we can tour the five functional blocks individually — not yet in terms of DOSBox-X's implementation, but in terms of what each block was responsible for on the real hardware.
+
+### CRTC {#crtc}
+
+The CRTC (Cathode Ray Tube Controller) owns the raster timing — how many scanlines, how wide, where blanking and retrace happen, where the text cursor sits. Its registers are where this chapter's first genuinely interesting quirk shows up: VGA's screens can need more precision than an 8-bit register comfortably holds. A 640×480 VGA display has 525 total scanlines in its timing — a number that doesn't fit in 8 bits (max 255) — so IBM's engineers didn't widen the register. They added an **Overflow Register** (CRTC index `0x07`) that holds the *missing* high-order bits for several other registers at once:
+
+```cpp
+case 0x07:  /* Overflow Register */
+    ...
+    /*
+        0  Bit 8 of Vertical Total (3d4h index 6)
+        1  Bit 8 of Vertical Display End (3d4h index 12h)
+        2  Bit 8 of Vertical Retrace Start (3d4h index 10h)
+        3  Bit 8 of Start Vertical Blanking (3d4h index 15h)
+        4  Bit 8 of Line Compare Register (3d4h index 18h)
+        5  Bit 9 of Vertical Total (3d4h index 6)
+        6  Bit 9 of Vertical Display End (3d4h index 12h)
+        7  Bit 9 of Vertical Retrace Start (3d4h index 10h)
+    */
+```
+
+Reconstructing the true 9- or 10-bit value for, say, Vertical Total means reading the 8-bit Vertical Total register *and* two specific bits out of a completely different register and combining them — a real hardware constraint (the register file's bit width was fixed early and video timing outgrew it) that software has no choice but to reproduce faithfully, bit position for bit position, or a guest program's raster-timing math comes out wrong. This is @chapter(what-is-dosbox-x)'s thesis in miniature: there's no "correct behavior" to derive from first principles here, only the specific, slightly awkward bit layout IBM actually shipped.
+
+### Sequencer {#sequencer}
+
+The Sequencer controls the clocking and memory-access side of VGA. It generates the basic pixel clock from which all other timing derives, it manages which of the four memory planes are writable at any given moment through the Map Mask register, and it controls the "chain-4" mode that maps the four planes into a single linear byte range — the setting that makes simple 256-color modes possible. Where the CRTC is the timing block that answers "when," the Sequencer is the memory-interface block that answers "which planes" and "at what rate."
+
+### Graphics Controller {#graphics-controller}
+
+The Graphics Controller governs the data path between the CPU and video memory — specifically, how a single byte written by the CPU becomes a multi-plane pixel operation. If any part of VGA earned its reputation for being difficult to program by hand, it's the Graphics Controller. It exposes four **write modes** (0–3) that determine the exact sequence of rotation, set/reset masking, logical raster operations, and bit-mask selection applied to each CPU write, together with two **read modes** that control what value a CPU read returns. The Graphics Controller also owns the **latches** — a 32-bit capture register that silently loads all four planes on every read from video memory, making the subsequent write (via Write Mode 1) a direct copy of those four latched bytes back to memory without any CPU data involvement. This "read to load the latch, then write to store it" idiom was the foundation of fast block copies and solid fills in 16-color planar modes. (We will examine how DOSBox-X implements each write mode in @section(vga-emulation/write-modes-and-latch-implementation), after the memory path itself has been established.)
+
+### Attribute Controller {#attribute-controller}
+
+The Attribute Controller breaks the index/data-pair pattern the other three blocks share, and it breaks it in a way that produced one of the most commonly-cited VGA programming gotchas of the era. Rather than two ports, it uses exactly *one*, `0x3C0`, for both index and data — toggling between the two meanings via an internal flip-flop that DOSBox-X models as a plain boolean:
+
+```cpp
+void write_p3c0(Bitu port,Bitu val,Bitu iolen) {
+    ...
+    if (!vga.internal.attrindex) {
+        attr(index)=val & 0x1F;
+        vga.internal.attrindex=true;
+        ...
+        return;
+    } else {
+        vga.internal.attrindex=false;
+        switch (attr(index)) {
+            /* Palette */
+            case 0x00: case 0x01: case 0x02: case 0x03:
+            ...
+```
+
+The first write to `0x3C0` after the flip-flop is clear sets the index and flips it to "expect data"; the *next* write is treated as data for that register and flips it back. So far this just looks like the same pattern as the other three controllers, expressed with one port instead of two. The trap is in what else resets that flip-flop. Reading the CRTC Input Status Register 1 at port `0x3DA` — the same status register @section(vga-emulation/retrace-timing-closing-the-loop-back-to-chapter-4) covers for retrace polling — unconditionally clears it back to "expect index," whether or not a program intended that:
+
+```cpp
+// (inside the 0x3DA status register read handler)
+vga.internal.attrindex=false;
+```
+
+Real DOS-era programming guides drilled this in specifically: if you don't know the flip-flop's current state, read `0x3DA` first to force it back to a known state before touching `0x3C0` — otherwise a write you intended as an index might land as data for whatever register the *previous*, unrelated code happened to leave selected, silently corrupting a completely different palette entry than the one you meant to touch. DOSBox-X reproduces this exact coupling between two registers that look, from a block diagram, like they belong to entirely separate subsystems (the Attribute Controller and the general status/timing logic) — because on real hardware, they were wired to share that one flip-flop, and no amount of clean API design in an emulator can paper over a dependency that's this literally electrical.
+
+### DAC {#dac}
+
+The DAC (Digital-to-Analog Converter, also called the RAMDAC) holds the color lookup table. In 256-color modes, each 8-bit pixel value in memory indexes into a 256-entry table of 18-bit RGB values (6 bits per channel), which the DAC converts to analog signals for the monitor. It occupies three ports: `0x3C7` (read index), `0x3C8` (write index), and `0x3C9` (data — three consecutive writes for R, G, B). The DAC is the final stage in the pixel pipeline: everything the other blocks configure — timing, planes, write modes — converges here, as color, at the edge of the emulated card.
+
+That "6 bits per channel" detail isn't just a historical footnote — DOSBox-X enforces it by default, and `write_p3c9()` (`src/hardware/vga_dac.cpp`) explains exactly why in its own comment:
+
+```cpp
+void write_p3c9(Bitu port,Bitu val,Bitu iolen) {
+    ...
+    // allow the full 8 bit ONLY if 8-bit DAC emulation is enabled AND 8-bit DAC mode is on.
+    // masking to 6 bits is REQUIRED for some games like "Amulets and Armor", where apparently
+    // the use of signed char with palette values can cause "overbright" effects if it can
+    // read back the full 8 bits.
+    if (!vga_8bit_dac)
+        val&=0x3f;
+
+    if (vga.dac.pel_index < 3) {
+        tmp_dac[vga.dac.pel_index]=(unsigned char)val;
+        ...
+```
+
+`vga.dac.pel_index` is exactly the three-consecutive-writes counter the hardware description above promises — it tracks whether the current write to `0x3C9` is supplying red, green, or blue. But the masking is the more interesting detail: this isn't DOSBox-X approximating period hardware's limited color depth for its own convenience — it's a compatibility fix for one specific, named DOS game whose palette-handling code silently depended on the DAC *not* returning more precision than it stored. A modernized "may as well support the full 8 bits since we can" implementation would be more capable than real 1987 hardware and would break *Amulets and Armor* as a direct result — which is as clean an illustration as this book has found yet of why faithfully reproducing a hardware limitation can matter more than lifting it.
+
+All of this register-level detail raises a natural question for the implementation: where inside DOSBox-X do writes to these ports actually land?
+
+## 10.5 From Port Writes to DOSBox-X Handlers {#from-port-writes-to-dosbox-x-handlers}
+
+Having seen how the hardware exposes these registers, we can now follow where those writes arrive inside DOSBox-X. Each of the register ports described above — `0x3D4`/`0x3D5` (CRTC), `0x3C4`/`0x3C5` (Sequencer), `0x3CE`/`0x3CF` (Graphics Controller), `0x3C0` (Attribute Controller), `0x3C8`/`0x3C9` (DAC) — has its own entry in the flat `io_writehandlers` table @chapter(dosbox-x-architecture) introduced (@section(dosbox-x-architecture/how-modules-talk-to-each-other)). When the guest executes `OUT` instructions targeting these ports, the CPU core dispatches through that table to the handler functions defined in the corresponding source file: `vga_write_p3d4` in `vga_crtc.cpp`, `vga_write_p3c4` in `vga_seq.cpp`, and so on.
+
+Each handler does one of two things. For CRTC, Sequencer, Graphics Controller, and DAC ports, the handler stores the value into the relevant field of the global `vga` structure's register arrays — `crtc[index]`, `seq[index]`, `gfx[index]`, or the DAC state — and, for certain sensitive registers, triggers immediate side effects: a change to the Sequencer's Map Mask may reconfigure which memory planes are accessible, and a change to the Graphics Controller's Mode Register updates `vga.config.write_mode`, which the memory subsystem will consult on the *next* write to video memory. For the Attribute Controller's single-port `0x3C0`, the same global `vga` structure tracks the flip-flop state and the currently selected attribute register.
+
+That "triggers immediate side effects" claim is worth making concrete rather than taking on faith, because the two clearest examples both reach directly into @section(vga-emulation/the-framebuffer-a-family-of-pagehandler-s), before this chapter has even introduced it. Here's the Sequencer's Map Mask register (index `0x02`) — the register @section(vga-emulation/hardware-blocks-what-each-sub-chip-does) already named as controlling which of the four memory planes are currently writable:
+
+```cpp
+case 2:  /* Map Mask */
+    seq(map_mask)=val & 15;
+    vga.config.full_map_mask=FillTable[val & 15];
+    vga.config.full_not_map_mask=~vga.config.full_map_mask;
+    cmplx |= VGA_ComplexityCheck_MAP_MASK();
+    if (cmplx != 0) VGA_SetupHandlers();
+    /*
+        0  Enable writes to plane 0 if set
+        1  Enable writes to plane 1 if set
+        2  Enable writes to plane 2 if set
+        3  Enable writes to plane 3 if set
+    */
+    break;
+```
+
+`VGA_SetupHandlers()` (`src/hardware/vga_memory.cpp`) is exactly where @section(vga-emulation/the-framebuffer-a-family-of-pagehandler-s)'s `PageHandler` family gets chosen from — it walks the current machine type and mode and calls `MEM_SetPageHandler()` to install whichever handler actually matches, out of the roughly twenty candidates @section(vga-emulation/the-framebuffer-a-family-of-pagehandler-s) lists. A write to this one Sequencer register, in other words, can directly cause the framebuffer's active `PageHandler` to change mid-session.
+
+The Sequencer's Memory Mode register (index `0x04`) reaches even further into @section(vga-emulation/the-framebuffer-a-family-of-pagehandler-s) — it's the exact bit that decides between the two handler names @section(vga-emulation/the-framebuffer-a-family-of-pagehandler-s) otherwise leaves unexplained, `VGA_ChainedVGA_Handler` and `VGA_UnchainedVGA_Handler`:
+
+```cpp
+case 4:  /* Memory Mode */
+    seq(memory_mode)=(uint8_t)val;
+    ...
+    if (IS_VGA_ARCH) {
+        /* Changing this means changing the VGA Memory Read/Write Handler */
+        if (val&0x08) vga.config.chained=true;
+        else vga.config.chained=false;
+        cmplx |= VGA_ComplexityCheck_MAP_MASK();
+```
+
+Bit 3 of this register is "chain-4" itself: set, and the four memory planes are addressed as one contiguous linear byte range (simple 256-color modes, `VGA_ChainedVGA_Handler`); clear, and a CPU write instead lands on all four planes at once through the latch-driven write modes @section(vga-emulation/write-modes-and-latch-implementation) covers (`VGA_UnchainedVGA_Handler`). `vga.config.chained` is the single boolean `VGA_SetupHandlers()` checks to decide which of those two handlers to install — which is to say, the Sequencer register the hardware tour above described only as "the setting that makes simple 256-color modes possible" is, concretely, one bit that DOSBox-X reads to choose between two entirely different `PageHandler` implementations.
+
+This is the point where the chapter's focus shifts. The controller state configured through the I/O ports above only becomes meaningful when the CPU finally writes to video memory. A Map Mask setting, a write mode, a palette entry — none of these matter until pixel data actually moves through the framebuffer. That movement is the subject of the next section.
+
+## 10.6 The Framebuffer: A Family of `PageHandler`s {#the-framebuffer-a-family-of-pagehandler-s}
+
+Everything so far has been about I/O ports — configuring *how* the hardware behaves. This section is about what happens when a program actually reads or writes video memory itself, and it's where @chapter(memory-model-and-address-translation)'s `PageHandler` abstraction (@section(memory-model-and-address-translation/from-address-translation-to-memory-mapping)) finally gets a real, working owner rather than the illustrative sketch that chapter had to make do with.
+
+`src/hardware/vga_memory.cpp` doesn't define one VGA memory handler — it defines close to twenty, each a distinct `PageHandler` subclass for a different combination of graphics mode and memory-access mode:
+
+```text
+VGA_ChainedVGA_Handler          - linear "chain-4" access (simple 256-color modes)
+VGA_UnchainedVGA_Handler        - classic 4-plane access (16-color modes, Mode X)
+VGA_UnchainedVGA_Fast_Handler   - a faster path for the common unchained case
+VGA_CGATEXT_PageHandler         - CGA-compatible text-mode memory
+VGA_TANDY_PageHandler           - Tandy-specific graphics memory layout
+VGA_LFB_Handler                 - SVGA linear framebuffer access
+VGA_MMIO_Handler                - memory-mapped I/O for SVGA extensions
+    ... and several more, including a parallel PC-98 family
+```
+
+This is the same "one file, one concern, registered into shared dispatch" instinct from @chapter(host-abstraction-sdl)'s `src/output/` discovery, applied here to memory instead of presentation backends — except the concern being subdivided isn't "which host renders this" but "which of VGA's many genuinely different memory-access behaviors currently applies." Which handler is actually installed for the `0xA0000`–`0xBFFFF` window changes every time the guest reconfigures VGA into a different mode. From the CPU core's point of view (@chapter(interpreter-core)'s fetch/decode/execute loop, or @chapter(dynamic-recompilation)'s compiled cache blocks), none of this complexity is visible — a `MOV [ES:DI], AL` targeting video memory looks exactly like any other memory write. @chapter(memory-model-and-address-translation) promised that a `PageHandler` could make an address range "not really memory"; VGA is the chapter-length demonstration of just how far that "not really" can go, with the CPU core never needing to know it's happening.
+
+`VGA_UnchainedVGA_Handler`, the planar-mode handler, shows the write mode and latch machinery wired directly into the `PageHandler` interface @chapter(memory-model-and-address-translation) introduced:
+
+```cpp
+class VGA_UnchainedVGA_Handler : public PageHandler {
+public:
+    VGA_UnchainedVGA_Handler() : PageHandler(PFLAG_NOCODE) {}
+    ...
+    void writeb(PhysPt addr, uint8_t val) override {
+        VGAMEM_USEC_write_delay(); do_write<uint8_t>(addr,val);
+    }
+    ...
+```
+
+Two details are worth calling out specifically. First, `PFLAG_NOCODE` — a flag telling the memory subsystem this page must never be treated as containing executable code, which matters directly to @chapter(dynamic-recompilation)'s self-modifying-code detection: video memory can change constantly and legitimately (that's the entire point of a framebuffer), and treating every VGA write as a potential code-cache invalidation would be both meaningless and expensive. Second, `VGAMEM_USEC_write_delay()` — a deliberate, modeled cost for touching video memory, present precisely because real VGA memory access was *not* free the way ordinary RAM access was; some period software timed loops against exactly this cost, in the same spirit as @chapter(main-loop-and-event-scheduler)'s Turbo button story: software calibrated to real hardware's real timing, which an emulator has to reproduce rather than simply outrun.
+
+But `writeb()` delegates to `do_write()`, and `do_write()` is where the Graphics Controller's configuration — write mode, set/reset, bit mask — finally enters the picture. The existence of that delegation raises the question: what transformation does `do_write` actually apply to the byte the CPU wrote?
+
+## 10.7 Write Modes and Latch Implementation {#write-modes-and-latch-implementation}
+
+Now that the framebuffer's entry point — the `PageHandler`'s `writeb()` — is in view, we can descend into what `do_write` actually does with the byte the CPU wrote. This is where the controller state from @section(vga-emulation/hardware-blocks-what-each-sub-chip-does)'s hardware tour finally becomes meaningful: the Graphics Controller's write mode and latch registers determine the exact transformation applied to every byte that passes through video memory.
+
+DOSBox-X's `ModeOperation()` (`src/hardware/vga_memory.cpp`) implements all four write modes, and its own comments — quoting the actual register documentation — are worth reading directly:
+
+```cpp
+switch (vga.config.write_mode) {
+    case 0x00:
+        // Write Mode 0: In this mode, the host data is first rotated as per the
+        // Rotate Count field, then the Enable Set/Reset mechanism selects data
+        // from this or the Set/Reset field. Then the selected Logical Operation
+        // is performed on the resulting data and the data in the latch register.
+        // Then the Bit Mask field is used to select which bits come from the
+        // resulting data and which come from the latch register. Finally, only
+        // the bit planes enabled by the Memory Plane Write Enable field are
+        // written to memory.
+        val=((val >> vga.config.data_rotate) | (val << (8-vga.config.data_rotate)));
+        full=ExpandTable[val];
+        full=(full & vga.config.full_not_enable_set_reset) | vga.config.full_enable_and_set_reset;
+        full=RasterOp(full,vga.config.full_bit_mask);
+        break;
+    case 0x01:
+        // Write Mode 1: data is transferred directly from the 32-bit latch
+        // register to display memory... The host data is not used in this mode.
+        full=vga.latch.d;
+        break;
+    ...
+```
+
+Write Mode 1 is the one worth sitting with, because it names the mechanism the other three modes all depend on: **the latch register**. Every read from VGA memory — regardless of which byte or which plane a program thinks it's reading — silently loads *all four planes* at that address into a 32-bit latch first:
+
+```cpp
+static inline Bitu VGA_Generic_Read_Handler(PhysPt planeaddr,PhysPt rawaddr,unsigned char plane) {
+    ...
+    vga.latch.d=((uint32_t*)vga.mem.linear)[planeaddr];
+    switch (vga.config.read_mode) {
+    case 0:
+        return (vga.latch.b[plane]);
+    ...
+```
+
+A program that reads one byte gets back one plane's data (`read_mode` 0), or — in `read_mode` 1, a genuinely obscure feature — a computed color-compare mask instead of raw plane data at all. But either way, the *side effect* is the same: all four planes at that address are now sitting in the latch, available for the *next write* to reuse via Write Mode 1, without the program ever having explicitly loaded them. This "read a pixel to prime the latch, then write to duplicate or blend it across all four planes at once" idiom is exactly how period VGA code achieved fast solid-color fills and block copies in 16-color modes — and it's precisely the kind of behavior that's invisible from documentation alone and only becomes obvious by reading (or writing) code that depends on it, which is why DOSBox-X's own source comments quote the original register documentation nearly verbatim rather than paraphrase it: there's no safe paraphrase of "the result depends on whatever was last read here."
+
+## 10.8 INT 10h: A Program, Not a Privilege {#int-10h-a-program-not-a-privilege}
+
+Now that we have traced the full data path — from port writes through controller state changes to the framebuffer's write-mode and latch logic — we can look at a client that travels exactly this path: the BIOS's INT 10h video services.
+
+It would be easy to assume `INT 10h` — the BIOS video services interrupt DOS software calls to set a video mode — has some elevated, direct channel to VGA's hardware state that ordinary programs don't. It doesn't. `INT10_SetVideoMode()` (`src/ints/int10_modes.cpp`) sets a mode by doing exactly what a program bypassing the BIOS entirely would have to do itself: writing the same index/data register pairs, through the same `IO_Write()` calls, over the same I/O ports this chapter has already covered.
+
+```cpp
+IO_Write(0x3c4,0); IO_Write(0x3c5,1);      // Sequencer: reset
+IO_Write(0x3c4,1); IO_Write(0x3c5,0x20);   // Sequencer: screen off
+...
+IO_Write(0x3c0,ct); IO_Write(0x3c0,att_data[ct]);   // Attribute Controller: index, then data
+...
+IO_Write(0x3c0,0x20); IO_Write(0x3c0,0x00);         // re-enable palette access when done
+```
+
+That middle line is a direct, concrete instance of @section(vga-emulation/hardware-blocks-what-each-sub-chip-does)'s index/data flip-flop, being driven correctly by the BIOS's own mode-set code — two writes to the same port, the first setting an index, the second supplying data for it, exactly the sequence a program would need to get right by hand if it wanted to bypass `INT 10h` and program the Attribute Controller itself. This is worth sitting with for a moment: `INT 10h` is not a separate, privileged code path with access to some internal DOSBox-X API that "sets a mode." It is guest code — BIOS code, but guest code all the same, running through @chapter(interrupts-exceptions-pic)'s ordinary interrupt-dispatch machinery — that happens to know the right sequence of register writes for a given mode, and issues them through the identical I/O port mechanism any other program would use. A DOS program that hand-rolled its own mode-set instead of calling `INT 10h` (and plenty did, chasing modes the BIOS didn't officially support, like the famous "Mode X") wasn't cheating or reaching around an abstraction layer — from the hardware's perspective, and therefore from DOSBox-X's perspective, there was never an abstraction layer there to reach around in the first place.
+
+## 10.9 Retrace Timing: Closing the Loop Back to @chapter(main-loop-and-event-scheduler "Chapter 4") {#retrace-timing-closing-the-loop-back-to-chapter-4}
+
+This chapter's last piece is also the one that reaches furthest back into the book. A huge amount of period VGA code — anything doing "wait for vertical retrace" flicker-free updates, or timing an effect against the raster beam's position — polls the CRTC Input Status Register 1 at port `0x3DA`, checking specific bits for horizontal blanking, vertical blanking, and vertical retrace. DOSBox-X doesn't maintain a literal scanline counter that increments on some fixed schedule. It computes those bits live, from elapsed time:
+
+```cpp
+double timeInFrame = PIC_FullIndex()-vga.draw.delay.framestart;
+...
+if (timeInFrame >= vga.draw.delay.vdend) {
+    retval |= 1; // vertical blanking
+} else {
+    const double timeInLine = fmod(timeInFrame,vga.draw.delay.htotal);
+    if (timeInLine >= vga.draw.delay.hblkstart && timeInLine <= vga.draw.delay.hblkend)
+        retval |= 1; // horizontal blanking
+}
+if (timeInFrame >= vga.draw.delay.vrstart && timeInFrame <= vga.draw.delay.vrend)
+    retval |= 8; // vertical retrace
+```
+
+`PIC_FullIndex()` is @chapter(main-loop-and-event-scheduler)'s scheduler clock — the same continuous, sub-tick-precise time source `PIC_RunQueue()` uses to decide when the next scheduled event fires. Rather than ticking a counter forward once per scanline (which would mean one more thing competing for attention in the event queue, once per scanline, every frame), DOSBox-X simply asks "how far into the current frame are we, right now" and compares that elapsed time against a handful of precomputed thresholds — `vdend`, `htotal`, `hblkstart`/`hblkend`, `vrstart`/`vrend` — to derive blanking and retrace state on demand, only when something actually reads the status register. This is the fast-path/slow-path instinct from Chapters 3 through 6 showing up once more: don't do the work of tracking raster position continuously if nothing is watching; do it exactly once, lazily, the moment a `0x3DA` read actually asks.
+
+Those thresholds aren't arbitrary either — they're derived directly from the CRTC timing registers @section(vga-emulation/hardware-blocks-what-each-sub-chip-does) covered, converted from register units into real milliseconds by `VGA_SetupDrawing()` (`src/hardware/vga_draw.cpp`) using the mode's pixel clock:
+
+```cpp
+vga.draw.delay.htotal = htotal*1000.0/clock;   // in milliseconds
+vga.draw.delay.vrstart = vrstart * vga.draw.delay.htotal;
+```
+
+So the full path, start to finish, runs through nearly every mechanism this book has built: a guest sets a video mode, which writes CRTC timing registers (@section(vga-emulation/hardware-blocks-what-each-sub-chip-does)) through the I/O port dispatch table (@chapter(dosbox-x-architecture)); `VGA_SetupDrawing()` converts those register values into millisecond thresholds using the mode's pixel clock; a "wait for retrace" polling loop reads port `0x3DA`, landing in the status register handler, which asks @chapter(main-loop-and-event-scheduler)'s scheduler what time it is and compares that against the thresholds just computed — all without a single dedicated "VGA timer" event ever needing to exist in @chapter(main-loop-and-event-scheduler)'s event queue at all.
+
+## 10.10 What Carries Forward {#what-carries-forward}
+
+VGA is, in the end, the chapter where this book's recurring ideas stop being demonstrated on comparatively simple examples and get shown carrying real weight. The `PageHandler` abstraction from @chapter(memory-model-and-address-translation) turns out to need nearly twenty distinct implementations to cover VGA's actual behavior, not one. The I/O port mechanism from @chapter(dosbox-x-architecture) turns out to nest a second layer of software-implemented indexing inside itself, three times over, because 256 ports was never going to be enough register space. @chapter(main-loop-and-event-scheduler)'s scheduler turns out to be flexible enough to answer "what's the raster doing right now" without needing a dedicated timer for it. And @chapter(what-is-dosbox-x)'s founding claim — that DOS software's real API is the hardware's register map — turns out to mean, concretely, reproducing a hardware flip-flop's exact reset conditions, an overflow register's exact bit assignments, and a write mode's exact rotate-then-mask-then-select order, because DOS-era software was written against precisely that level of literalism and nothing less will run it correctly.
+
+None of the device chapters ahead will need to introduce a new kind of idea. They'll need exactly the ideas this one just leaned on — register indirection, `PageHandler` specialization, and time-based state computed lazily against @chapter(main-loop-and-event-scheduler)'s clock — applied to different hardware with its own register map and its own history.
+
+---
+
+*Next: @chapter(dma-and-pit) — DMA and the PIT, where the 8237 DMA controller and the PIT channels beyond the system timer already covered in @chapter(interrupts-exceptions-pic) — particularly channel 2, driving the PC speaker — get the same register-level treatment this chapter gave VGA.*

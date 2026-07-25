@@ -1,0 +1,185 @@
+<svg viewBox="0 0 1320 1340" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+    <title>CPU_CycleMax budget lifecycle within one guest millisecond</title>
+    <desc>PIC_RunQueue() always recycles the previous leftover into CPU_CycleLeft first, then hands out a new batch only if CPU_CycleLeft is still positive. Decode ends either by fully diverting to CPU_IODelayRemoved (HLT) or by leaving a remainder that the next PIC_RunQueue() call recycles.</desc>
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+        </marker>
+        <style>
+            svg {
+            --fg-title: #111827;
+            --fg-subtitle: #4b5563;
+            --arrow: #374151;
+
+            --indigo-bg: #eef2ff;
+            --indigo-border: #6366f1;
+            --indigo-label: #4338ca;
+            --indigo-code: #1e1b4b;
+            --indigo-note: #4b5563;
+
+            --green-bg: #ecfdf5;
+            --green-border: #10b981;
+            --green-label: #065f46;
+            --green-code: #064e3b;
+            --green-note: #4b5563;
+
+            --orange-bg: #fff7ed;
+            --orange-border: #f97316;
+            --orange-label: #9a3412;
+            --orange-code: #7c2d12;
+            --orange-footnote: #9a3412;
+
+            --box-bg: #f3f4f6;
+            --box-border: #9ca3af;
+            --box-text: #374151;
+
+            --footer-line: #e5e7eb;
+            --footer-text: #374151;
+            --footer-subtext: #4b5563;
+            }
+
+            [data-theme='dark'] svg {
+            --fg-title: #f3f4f6;
+            --fg-subtitle: #cbd5e1;
+            --arrow: #9ca3af;
+
+            --indigo-bg: #26264d;
+            --indigo-border: #818cf8;
+            --indigo-label: #a5b4fc;
+            --indigo-code: #e0e7ff;
+            --indigo-note: #9ca3af;
+
+            --green-bg: #163a2e;
+            --green-border: #34d399;
+            --green-label: #6ee7b7;
+            --green-code: #d1fae5;
+            --green-note: #9ca3af;
+
+            --orange-bg: #3a2413;
+            --orange-border: #fb923c;
+            --orange-label: #fdba74;
+            --orange-code: #fed7aa;
+            --orange-footnote: #fdba74;
+
+            --box-bg: #1f2937;
+            --box-border: #94a3b8;
+            --box-text: #e5e7eb;
+
+            --footer-line: #374151;
+            --footer-text: #e5e7eb;
+            --footer-subtext: #cbd5e1;
+            }
+
+            text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+            .code { font-family: Consolas, Menlo, monospace; }
+            .decision { stroke-dasharray: 5 3; }
+        </style>
+    </defs>
+
+    <text x="600" y="40" text-anchor="middle" fill="var(--fg-title)" font-size="20" font-weight="700">CPU_CycleMax: one millisecond's lifecycle</text>
+    <text x="600" y="64" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13">PIC_RunQueue() always recycles first, then re-batches only if CPU_CycleLeft remains.</text>
+
+    <!-- Node 1: Refill (indigo) -->
+    <rect x="200" y="100" width="440" height="145" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="224" y="126" fill="var(--indigo-label)" font-size="15" font-weight="700">Refill the pool</text>
+    <text x="224" y="148" class="code" fill="var(--indigo-code)" font-size="13">TIMER_AddTick(): CPU_CycleLeft +=</text>
+    <text x="224" y="166" class="code" fill="var(--indigo-code)" font-size="13">CPU_CycleMax + CPU_Cycles</text>
+    <text x="224" y="186" fill="var(--indigo-note)" font-size="12">PIC_Ticks++; fresh budget (pic.cpp:856-865)</text>
+    <text x="224" y="206" fill="var(--indigo-note)" font-size="12">also steps every pending event's deadline —</text>
+    <text x="224" y="226" fill="var(--indigo-note)" font-size="12">index -= 1.0 for each (pic.cpp:872-876)</text>
+
+    <line x1="420" y1="245" x2="420" y2="277" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="520" y="266" text-anchor="start" fill="var(--arrow)" font-size="12" font-style="italic">millisecond starts</text>
+
+    <!-- Node 2: PIC_RunQueue() — recycle + maybe re-batch, ONE call -->
+    <rect x="200" y="277" width="440" height="110" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="224" y="303" fill="var(--indigo-label)" font-size="15" font-weight="700">PIC_RunQueue()</text>
+    <text x="224" y="325" class="code" fill="var(--indigo-code)" font-size="12">CPU_CycleLeft += CPU_Cycles; CPU_Cycles = 0</text>
+    <text x="224" y="345" class="code" fill="var(--indigo-code)" font-size="12">if CPU_CycleLeft &gt; 0: hand out next batch</text>
+    <text x="224" y="365" fill="var(--indigo-note)" font-size="12">always recycles first, then maybe re-batches — pic.cpp:745-782</text>
+    <circle cx="200" cy="332" r="3" fill="var(--indigo-border)"/>
+
+    <line x1="420" y1="387" x2="420" y2="419" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <!-- Diamond: CPU_CycleLeft > 0? -->
+    <polygon class="decision" points="420,419 500,479 420,539 340,479" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="420" y="475" text-anchor="middle" fill="var(--box-text)" font-size="13" font-weight="700">CPU_CycleLeft</text>
+    <text x="420" y="491" text-anchor="middle" fill="var(--box-text)" font-size="13" font-weight="700">&gt; 0?</text>
+
+    <line x1="420" y1="539" x2="420" y2="571" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="440" y="559" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">yes — batch handed out</text>
+
+    <path d="M500,479 L1200,479 L1200,1080 L640,1080" fill="none" stroke="var(--arrow)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    <text x="520" y="469" text-anchor="start" fill="var(--arrow)" font-size="11" font-style="italic">no — this ms's pool is empty</text>
+
+    <!-- Node 3: Decode & spend (green) -->
+    <rect x="200" y="571" width="440" height="120" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+    <text x="224" y="597" fill="var(--green-label)" font-size="15" font-weight="700">core_normal.cpp — decode &amp; spend</text>
+    <text x="224" y="619" class="code" fill="var(--green-code)" font-size="13">while (CPU_Cycles-- &gt; 0) { … }</text>
+    <text x="224" y="639" fill="var(--green-note)" font-size="12">new event with sooner deadline cuts it short —</text>
+    <text x="224" y="657" fill="var(--green-note)" font-size="12">AddEntry() folds cycles back (pic.cpp:646-649)</text>
+    <text x="224" y="675" fill="var(--green-note)" font-size="12">port I/O waits siphon cycles inline → CPU_IODelayRemoved</text>
+
+    <path d="M640,675 L900,675 L900,733" fill="none" stroke="var(--orange-border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    <text x="700" y="667" text-anchor="start" fill="var(--orange-footnote)" font-size="11" font-style="italic">I/O delay (partial, inline)</text>
+
+    <line x1="420" y1="691" x2="420" y2="723" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="520" y="710" text-anchor="start" fill="var(--arrow)" font-size="12" font-style="italic">batch ends</text>
+
+    <!-- Diamond: decision (gray/neutral) -->
+    <polygon class="decision" points="420,723 500,793 420,863 340,793" fill="var(--box-bg)" stroke="var(--box-border)" stroke-width="1.5"/>
+    <text x="420" y="789" text-anchor="middle" fill="var(--box-text)" font-size="13" font-weight="700">Batch ended —</text>
+    <text x="420" y="805" text-anchor="middle" fill="var(--box-text)" font-size="13" font-weight="700">why?</text>
+
+    <line x1="500" y1="793" x2="760" y2="793" stroke="var(--orange-border)" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <text x="580" y="783" text-anchor="start" fill="var(--orange-footnote)" font-size="12" font-style="italic">HLT (full)</text>
+
+    <!-- Sink: CPU_IODelayRemoved (orange) -->
+    <rect x="760" y="733" width="280" height="140" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="784" y="760" fill="var(--orange-label)" font-size="15" font-weight="700">CPU_IODelayRemoved</text>
+    <text x="784" y="778" class="code" fill="var(--orange-code)" font-size="11">cpu.cpp:3259,3276 (HLT, full)</text>
+    <text x="784" y="794" class="code" fill="var(--orange-code)" font-size="11">iohandler.cpp:411-417 (I/O, partial)</text>
+    <text x="784" y="816" fill="var(--orange-footnote)" font-size="12">Genuinely idle — excluded from</text>
+    <text x="784" y="834" fill="var(--orange-footnote)" font-size="12">throughput, not recycled</text>
+
+    <line x1="420" y1="863" x2="420" y2="895" stroke="var(--indigo-border)" stroke-width="1.5"/>
+    <text x="440" y="880" text-anchor="start" fill="var(--indigo-note)" font-size="11" font-style="italic">spent to zero, cut short,</text>
+    <text x="440" y="894" text-anchor="start" fill="var(--indigo-note)" font-size="11" font-style="italic">or idle-yield (CALLBACK_Idle)</text>
+
+    <!-- Shared "control returns to PIC_RunQueue()" line — two merge points, one destination -->
+    <path d="M800,873 L800,895 L140,895 L140,332 L200,332" fill="none" stroke="var(--indigo-border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    <circle cx="420" cy="895" r="3" fill="var(--indigo-border)"/>
+    <circle cx="800" cy="895" r="3" fill="var(--indigo-border)"/>
+    <text x="20" y="600" text-anchor="start" fill="var(--indigo-note)" font-size="12" font-style="italic">either way, control</text>
+    <text x="20" y="616" text-anchor="start" fill="var(--indigo-note)" font-size="12" font-style="italic">returns to PIC_RunQueue()</text>
+    <text x="20" y="632" text-anchor="start" fill="var(--indigo-note)" font-size="12" font-style="italic">— pic.cpp:745 (top)</text>
+
+    <!-- Node 7: increaseticks() (orange) -->
+    <rect x="200" y="950" width="440" height="170" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+    <text x="224" y="976" fill="var(--orange-label)" font-size="15" font-weight="700">§3.9 — increaseticks()</text>
+    <text x="224" y="996" class="code" fill="var(--orange-code)" font-size="13">dosbox.cpp</text>
+    <text x="224" y="1018" fill="var(--orange-footnote)" font-size="12">compares ticksScheduled (host) vs</text>
+    <text x="224" y="1036" fill="var(--orange-footnote)" font-size="12">ticksDone (guest) every ~250 ms</text>
+    <text x="224" y="1054" fill="var(--orange-footnote)" font-size="12">discounts CPU_IODelayRemoved (dosbox.cpp:645)</text>
+    <text x="224" y="1072" fill="var(--orange-footnote)" font-size="12">resets both + IODelayRemoved (dosbox.cpp:703–705)</text>
+    <text x="224" y="1090" fill="var(--orange-footnote)" font-size="12">→ rescales CPU_CycleMax</text>
+
+    <!-- Discount path: sink -> increaseticks -->
+    <path d="M900,873 L900,994 L640,994" fill="none" stroke="var(--orange-border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    <text x="910" y="1000" text-anchor="start" fill="var(--orange-footnote)" font-size="12" font-style="italic">discounted</text>
+
+    <!-- Long loop-back: increaseticks -> refill -->
+    <path d="M640,1050 L1080,1050 L1080,172 L640,172" fill="none" stroke="var(--orange-border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+    <text x="1090" y="560" text-anchor="start" fill="var(--orange-footnote)" font-size="12" font-style="italic">ms owed</text>
+    <text x="1090" y="760" text-anchor="start" fill="var(--orange-footnote)" font-size="12" font-style="italic">20ms cap,</text>
+    <text x="1090" y="776" text-anchor="start" fill="var(--orange-footnote)" font-size="12" font-style="italic">Turbo-skipped</text>
+
+    <!-- Footer -->
+    <line x1="200" y1="1160" x2="640" y2="1160" stroke="var(--footer-line)"/>
+    <text x="420" y="1186" text-anchor="middle" fill="var(--footer-text)" font-size="14" font-weight="700">Three mechanisms, one shared sink, different triggers.</text>
+    <text x="420" y="1206" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">Batch-end causes (zero, event cut-short, idle-yield) all recycle to CPU_CycleLeft;</text>
+    <text x="420" y="1224" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">I/O delay siphons cycles inline while the batch runs; only HLT fully diverts it.</text>
+    <text x="420" y="1248" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">increaseticks() never sees which of these happened — only whether whole milliseconds</text>
+    <text x="420" y="1266" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">kept pace with real time, discounting CPU_IODelayRemoved from both siphon sources alone.</text>
+
+</svg>

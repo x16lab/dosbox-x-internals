@@ -1,0 +1,102 @@
+<svg viewBox="0 0 1000 700" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', Helvetica, Arial, sans-serif">
+<defs>
+<style>
+svg {
+    --fg-title: #111827; --fg-subtitle: #4b5563; --arrow: #374151;
+    --indigo-bg: #eef2ff; --indigo-border: #6366f1; --indigo-label: #4338ca; --indigo-code: #1e1b4b; --indigo-note: #4b5563;
+    --green-bg: #ecfdf5; --green-border: #10b981; --green-label: #065f46; --green-code: #064e3b; --green-note: #4b5563;
+    --orange-bg: #fff7ed; --orange-border: #f97316; --orange-label: #9a3412; --orange-code: #7c2d12; --orange-footnote: #9a3412;
+    --footer-line: #e5e7eb; --footer-text: #374151; --footer-subtext: #4b5563;
+    --box-bg: #f3f4f6; --box-border: #9ca3af; --box-text: #374151;
+    --dashed-line: #6b7280;
+}
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6; --fg-subtitle: #cbd5e1; --arrow: #9ca3af;
+    --indigo-bg: #26264d; --indigo-border: #818cf8; --indigo-label: #a5b4fc; --indigo-code: #e0e7ff; --indigo-note: #9ca3af;
+    --green-bg: #163a2e; --green-border: #34d399; --green-label: #6ee7b7; --green-code: #d1fae5; --green-note: #9ca3af;
+    --orange-bg: #3a2413; --orange-border: #fb923c; --orange-label: #fdba74; --orange-code: #fed7aa; --orange-footnote: #fdba74;
+    --footer-line: #374151; --footer-text: #e5e7eb; --footer-subtext: #cbd5e1;
+    --box-bg: #1f2937; --box-border: #94a3b8; --box-text: #e5e7eb;
+    --dashed-line: #94a3b8;
+}
+.label { font-weight: 700; font-size: 14px; }
+.code  { font-family: Consolas, Menlo, monospace; font-size: 11.5px; }
+.note  { font-size: 10.5px; }
+</style>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+</defs>
+
+<text x="500" y="30" text-anchor="middle" fill="var(--fg-title)" font-size="22" font-weight="700">Cycle Accounting Within One Millisecond</text>
+<text x="500" y="52" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13" font-family="Consolas, Menlo, monospace">include/pic.h:60-61 — PIC_TickIndex()</text>
+
+<text x="500" y="76" text-anchor="middle" class="label" fill="var(--box-text)" font-size="13">three snapshots of the same three live counters</text>
+
+<!-- ms start: entirely CPU_CycleLeft -->
+<text x="210" y="98" text-anchor="middle" class="label" fill="var(--orange-label)">ms start</text>
+<rect x="80" y="106" width="260" height="52" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="210" y="128" text-anchor="middle" class="code" fill="var(--orange-code)" font-weight="700">CPU_CycleLeft = 3000</text>
+<text x="210" y="144" text-anchor="middle" class="note" fill="var(--orange-footnote)">Cycles=0, Executed=0</text>
+<text x="210" y="176" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">right after TIMER_AddTick()</text>
+<text x="210" y="190" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">refill — pic.cpp:864-865</text>
+
+<!-- mid-ms: three-way split (proportional: 1200/300/1500 of 3000) -->
+<text x="500" y="98" text-anchor="middle" class="label" fill="var(--box-text)">mid-ms</text>
+<rect x="370" y="106" width="104" height="52" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<rect x="474" y="106" width="26"  height="52" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<rect x="500" y="106" width="130" height="52" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="422" y="182" text-anchor="middle" class="note" fill="var(--green-note)" font-weight="700">executed</text>
+<text x="422" y="196" text-anchor="middle" class="note" fill="var(--green-note)">1200</text>
+<text x="487" y="212" text-anchor="middle" class="note" fill="var(--indigo-note)" font-weight="700">Cycles</text>
+<text x="487" y="226" text-anchor="middle" class="note" fill="var(--indigo-note)">300 (batch left)</text>
+<text x="565" y="182" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-weight="700">CycleLeft</text>
+<text x="565" y="196" text-anchor="middle" class="note" fill="var(--orange-footnote)">1500 (unclaimed)</text>
+
+<!-- Carve-out note, between ms-start and mid-ms panels -->
+<text x="565" y="124" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic" font-size="9.5">CycleLeft −= Cycles</text>
+<text x="565" y="136" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic" font-size="9.5">(carved out, size set</text>
+<text x="565" y="148" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic" font-size="9.5">by scheduler)</text>
+
+    <!-- ms end: entirely executed -->
+<text x="790" y="98" text-anchor="middle" class="label" fill="var(--green-label)">ms end</text>
+<rect x="660" y="106" width="260" height="52" fill="var(--green-bg)" stroke="var(--green-border)"/>
+<text x="790" y="128" text-anchor="middle" class="code" fill="var(--green-code)" font-weight="700">Executed = 3000</text>
+<text x="790" y="144" text-anchor="middle" class="note" fill="var(--green-note)">CycleLeft=0, Cycles=0</text>
+<text x="790" y="176" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">PIC_RunQueue(): (CycleLeft+Cycles)</text>
+<text x="790" y="190" text-anchor="middle" class="note" fill="var(--fg-subtitle)" font-style="italic">&lt;=0 → returns false — pic.cpp:796-798</text>
+
+<path d="M340,132 L370,132" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M630,132 L660,132" fill="none" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- formula box -->
+<rect x="150" y="250" width="700" height="140" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)"/>
+<text x="500" y="272" text-anchor="middle" class="label" fill="var(--indigo-label)">PIC_TickIndex() — verbatim, pic.h:60-61</text>
+<text x="500" y="294" text-anchor="middle" class="code" fill="var(--indigo-code)">return (CPU_CycleMax - CPU_CycleLeft - CPU_Cycles) / (pic_tickindex_t)CPU_CycleMax;</text>
+
+<text x="180" y="320" class="code" fill="var(--orange-code)">ms start:</text>
+<text x="820" y="320" text-anchor="end" class="code" fill="var(--orange-code)">(3000 − 3000 − 0) / 3000 = 0.0</text>
+<text x="180" y="338" class="code" fill="var(--indigo-code)">mid-ms:</text>
+<text x="820" y="338" text-anchor="end" class="code" fill="var(--indigo-code)">(3000 − 1500 − 300) / 3000 = 0.4</text>
+<text x="180" y="356" class="code" fill="var(--green-code)">ms end:</text>
+<text x="820" y="356" text-anchor="end" class="code" fill="var(--green-code)">(3000 − 0 − 0) / 3000 = 1.0</text>
+<text x="500" y="378" text-anchor="middle" class="note" fill="var(--indigo-note)" font-style="italic">example uses CPU_CycleMax = 3000 for round numbers, not a fixed constant</text>
+
+<!-- refill note -->
+<rect x="150" y="404" width="700" height="66" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)"/>
+<text x="500" y="424" text-anchor="middle" class="label" fill="var(--orange-label)" font-size="13">at the boundary — TIMER_AddTick(), pic.cpp:864-865</text>
+<text x="500" y="444" text-anchor="middle" class="code" fill="var(--orange-code)">CPU_CycleLeft += CPU_CycleMax + CPU_Cycles;  CPU_Cycles = 0;</text>
+<text x="500" y="460" text-anchor="middle" class="note" fill="var(--orange-footnote)" font-style="italic">an accumulating add, not a reset to CPU_CycleMax — leftover (or debt) rolls forward</text>
+
+<!-- overrun nuance box -->
+<rect x="150" y="484" width="700" height="92" rx="10" fill="var(--box-bg)" stroke="var(--box-border)"/>
+<text x="500" y="504" text-anchor="middle" class="label" fill="var(--box-text)" font-size="13">the boundary isn't a perfect fence — pic.cpp:739-741, 748-749</text>
+<text x="500" y="524" text-anchor="middle" class="code" fill="var(--box-text)">CPU_Cycles can go slightly negative (a slow I/O access overruns the batch);</text>
+<text x="500" y="540" text-anchor="middle" class="code" fill="var(--box-text)">CPU_CycleLeft += CPU_Cycles;  CPU_Cycles = 0;   // folded in at the *next* PIC_RunQueue() call</text>
+<text x="500" y="560" text-anchor="middle" class="note" fill="var(--footer-subtext)" font-style="italic">so an unlucky instruction can borrow a handful of cycles from the following millisecond</text>
+
+<line x1="70" y1="596" x2="930" y2="596" stroke="var(--footer-line)"/>
+<text x="500" y="618" text-anchor="middle" fill="var(--footer-text)" font-size="13" font-weight="700">PIC_TickIndex() is a ratio recomputed from three live counters — it starts at 0.0, ends at 1.0, and is never a stored fraction in between.</text>
+<text x="500" y="638" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">"Executed" only grows as CPU_Cycles is spent by the decoder — carving a batch out of CPU_CycleLeft does not, by itself, advance it.</text>
+<text x="500" y="660" text-anchor="middle" fill="var(--orange-footnote)" font-size="11" font-style="italic">Verified against joncampbell123/dosbox-x @ 192c1756 — include/pic.h:60-66, src/hardware/pic.cpp:739-798, 864-865.</text>
+</svg>

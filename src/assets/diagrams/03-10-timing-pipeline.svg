@@ -1,0 +1,144 @@
+<svg viewBox="0 0 900 840" width="100%" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>The DOSBox-X timing pipeline</title>
+<desc>Five-stage pipeline: host milliseconds, cycle budget, CPU execution, guest milliseconds, virtual hardware. Each arrow is named for the function that performs that transition. increaseticks() feeds back into the cycle budget box that it rewrites.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0,0 L10,5 L0,10 z" fill="var(--arrow)"/>
+</marker>
+<style>
+svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+}
+
+[data-theme='dark'] svg {
+    --fg-title: #f3f4f6;
+    --fg-subtitle: #cbd5e1;
+    --arrow: #9ca3af;
+
+    --indigo-bg: #26264d;
+    --indigo-border: #818cf8;
+    --indigo-label: #a5b4fc;
+    --indigo-code: #e0e7ff;
+    --indigo-note: #9ca3af;
+
+    --green-bg: #163a2e;
+    --green-border: #34d399;
+    --green-label: #6ee7b7;
+    --green-code: #d1fae5;
+    --green-note: #9ca3af;
+
+    --orange-bg: #3a2413;
+    --orange-border: #fb923c;
+    --orange-label: #fdba74;
+    --orange-code: #fed7aa;
+    --orange-footnote: #fdba74;
+
+    --footer-line: #374151;
+    --footer-text: #e5e7eb;
+    --footer-subtext: #cbd5e1;
+}
+
+text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+.code { font-family: Consolas, Menlo, monospace; }
+</style>
+</defs>
+
+<text x="370" y="40" text-anchor="middle" fill="var(--fg-title)" font-size="20" font-weight="700">The pipeline, without variable names</text>
+<text x="370" y="64" text-anchor="middle" fill="var(--fg-subtitle)" font-size="13">Every remaining section in this chapter builds, or explains, one box below.</text>
+
+<!-- Panel 1: Host milliseconds (indigo) -->
+<rect x="140" y="100" width="460" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="164" y="126" fill="var(--indigo-label)" font-size="15" font-weight="700">Host milliseconds</text>
+<text x="164" y="148" class="code" fill="var(--indigo-code)" font-size="13">GetTicks()  →  SDL_GetTicks()</text>
+<text x="164" y="170" fill="var(--indigo-note)" font-size="12">The one real clock DOSBox-X has — §3.6</text>
+
+<!-- Arrow 1 (highlighted): Host ms -> Cycle budget -->
+<line x1="370" y1="190" x2="370" y2="224" stroke="var(--orange-border)" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="460" y="209" text-anchor="start" class="code" fill="var(--orange-footnote)" font-size="12" font-style="italic">TIMER_AddTick()</text>
+
+<!-- Panel 2: Cycle budget (indigo fill, orange border = target of correction) -->
+<rect x="140" y="224" width="460" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+<text x="164" y="250" fill="var(--indigo-label)" font-size="15" font-weight="700">Cycle budget</text>
+<text x="164" y="272" class="code" fill="var(--indigo-code)" font-size="13">CPU_CycleMax   (TIMER_AddTick, pic.cpp)</text>
+<text x="164" y="294" fill="var(--indigo-note)" font-size="12">How much guest work is allowed this millisecond — §3.7</text>
+<circle cx="600" cy="269" r="3" fill="var(--orange-border)"/>
+
+<!-- Arrow 2 -->
+<line x1="370" y1="314" x2="370" y2="346" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="333" text-anchor="start" class="code" fill="var(--arrow)" font-size="12" font-style="italic">PIC_RunQueue()</text>
+
+<!-- Panel 3: CPU execution (indigo) -->
+<rect x="140" y="346" width="460" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="164" y="372" fill="var(--indigo-label)" font-size="15" font-weight="700">CPU execution</text>
+<text x="164" y="394" class="code" fill="var(--indigo-code)" font-size="13">while (CPU_Cycles-- &gt; 0) {…}  (core_normal.cpp)</text>
+<text x="164" y="416" fill="var(--indigo-note)" font-size="12">The budget actually spent, instruction by instruction — §3.7</text>
+
+<!-- Arrow 3 -->
+<line x1="370" y1="436" x2="370" y2="468" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="455" text-anchor="start" class="code" fill="var(--arrow)" font-size="12" font-style="italic">PIC_TickIndex()</text>
+
+<!-- Panel 4: Guest milliseconds (indigo) -->
+<rect x="140" y="468" width="460" height="90" rx="10" fill="var(--indigo-bg)" stroke="var(--indigo-border)" stroke-width="1.5"/>
+<text x="164" y="494" fill="var(--indigo-label)" font-size="15" font-weight="700">Guest milliseconds</text>
+<text x="164" y="516" class="code" fill="var(--indigo-code)" font-size="13">PIC_Ticks + PIC_TickIndex()   (pic.h)</text>
+<text x="164" y="538" fill="var(--indigo-note)" font-size="12">Completed simulated time, whole + fractional — §3.7–§3.8</text>
+<circle cx="600" cy="513" r="3" fill="var(--orange-border)"/>
+
+<!-- Arrow 4 -->
+<line x1="370" y1="558" x2="370" y2="590" stroke="var(--arrow)" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="460" y="577" text-anchor="start" class="code" fill="var(--arrow)" font-size="12" font-style="italic">PIC_FullIndex()</text>
+
+<!-- Panel 5: Virtual hardware (green) -->
+<rect x="140" y="590" width="460" height="104" rx="10" fill="var(--green-bg)" stroke="var(--green-border)" stroke-width="1.5"/>
+<text x="164" y="616" fill="var(--green-label)" font-size="15" font-weight="700">Virtual hardware</text>
+<text x="164" y="638" class="code" fill="var(--green-code)" font-size="13">PIC_FullIndex()</text>
+<text x="164" y="658" fill="var(--green-code)" font-size="12">PIT · VGA · Sound Blaster · GUS · CMOS RTC · keyboard</text>
+<text x="164" y="678" fill="var(--green-note)" font-size="12">Every device reads its "now" off this line</text>
+
+<!-- Feedback loop: Guest ms -> increaseticks() -> Cycle budget -->
+<path d="M600,513 L630,513 L630,380 L650,380" fill="none" stroke="var(--orange-border)" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="634" y="470" text-anchor="start" class="code" fill="var(--orange-footnote)" font-size="12" font-style="italic">sample ticksDone</text>
+<path d="M650,380 L630,380 L630,269 L600,269" fill="none" stroke="var(--orange-border)" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+<text x="634" y="240" text-anchor="start" class="code" fill="var(--orange-footnote)" font-size="12" font-style="italic">apply new CPU_CycleMax</text>
+
+<!-- increaseticks() node -->
+<rect x="650" y="300" width="220" height="160" rx="10" fill="var(--orange-bg)" stroke="var(--orange-border)" stroke-width="1.5"/>
+<text x="666" y="327" fill="var(--orange-label)" font-size="14" font-weight="700">§3.9 — increaseticks()</text>
+<text x="666" y="347" class="code" fill="var(--orange-code)" font-size="12">dosbox.cpp</text>
+<text x="666" y="371" fill="var(--orange-footnote)" font-size="12">compares ticksScheduled</text>
+<text x="666" y="390" fill="var(--orange-footnote)" font-size="12">(host ms) vs ticksDone</text>
+<text x="666" y="409" fill="var(--orange-footnote)" font-size="12">(guest ms) every ~250 ms</text>
+<text x="666" y="428" fill="var(--orange-footnote)" font-size="12">→ rescales CPU_CycleMax</text>
+
+<!-- Footer -->
+<line x1="140" y1="720" x2="600" y2="720" stroke="var(--footer-line)"/>
+<text x="370" y="740" text-anchor="middle" fill="var(--footer-text)" font-size="14" font-weight="700">The correction arrow (§3.9) is what this chapter builds toward.</text>
+<text x="370" y="760" text-anchor="middle" fill="var(--footer-subtext)" font-size="12">Host ms → cycle budget drifts apart unless checked and corrected continuously.</text>
+<text x="370" y="784" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">The host-to-cycles ratio is re-measured, not assumed, every ~250 ms.</text>
+<text x="370" y="806" text-anchor="middle" fill="var(--orange-footnote)" font-size="12" font-style="italic">That re-measurement is what keeps guest and host time from drifting apart.</text>
+
+</svg>

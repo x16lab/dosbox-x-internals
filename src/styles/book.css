@@ -1,0 +1,935 @@
+/* ============================================
+   Book Layout & Reader Styles
+   ============================================ */
+
+
+
+/* -- Book Layout (individual chapter pages) -- */
+.book-layout {
+  width: min(var(--content-width), calc(100% - var(--page-pad) * 2));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.book-content {
+  max-width: var(--prose-width);
+  margin-inline: auto;
+  padding-block: calc(var(--baseline) * 2);
+  width: 100%;
+}
+
+.book-article {
+  line-height: 1.75;
+}
+
+.book-article h2,
+.book-article h3,
+.book-article h4 {
+  max-width: 20ch;
+}
+
+.book-article h2 {
+  margin-top: calc(var(--baseline) * 2.5);
+  margin-bottom: var(--baseline);
+  font-size: 1.75rem;
+  line-height: 1.2;
+}
+
+.book-article h3 {
+  margin-top: calc(var(--baseline) * 2);
+  margin-bottom: calc(var(--baseline) * 0.5);
+  font-size: 1.3rem;
+}
+
+.book-article p {
+  color: var(--color-muted);
+  line-height: 1.8;
+}
+
+.book-article ul,
+.book-article ol {
+  padding-left: 1.3rem;
+  color: var(--color-muted);
+}
+
+.book-article li {
+  margin-bottom: 0.35rem;
+  line-height: 1.7;
+}
+
+.book-article a {
+  font-weight: 700;
+}
+
+.book-article pre {
+  margin-block: calc(var(--baseline) * 1.25);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.book-article blockquote {
+  margin: calc(var(--baseline) * 1.25) 0;
+  padding: 0.75rem 1.25rem;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+.book-article blockquote p {
+  margin: 0;
+}
+
+.book-article table {
+  width: 100%;
+  margin-block: var(--baseline);
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.book-article th {
+  padding: 0.5rem 0.75rem;
+  background: var(--color-soft);
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 2px solid var(--color-line-strong);
+}
+
+.book-article td {
+  padding: 0.45rem 0.75rem;
+  border-bottom: var(--hairline);
+  color: var(--color-muted);
+}
+
+/* -- Chapter Navigation -- */
+.chapter-nav {
+  margin-top: calc(var(--baseline) * 3);
+  padding-top: var(--baseline);
+  border-top: var(--hairline);
+}
+
+.chapter-nav-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.chapter-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: var(--baseline);
+  border: var(--hairline);
+  background: var(--color-surface);
+  transition: border-color 180ms ease;
+}
+
+.chapter-link:hover {
+  border-color: var(--color-accent);
+}
+
+.chapter-next {
+  text-align: right;
+}
+
+.chapter-nav-label {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.chapter-nav-title {
+  color: var(--color-text);
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.book-footer {
+  width: min(var(--content-width), calc(100% - var(--page-pad) * 2));
+  margin-inline: auto;
+  padding-block: calc(var(--baseline) * 1.3);
+  border-top: var(--hairline);
+  color: var(--color-muted);
+  font-size: 0.88rem;
+  text-align: center;
+}
+
+.book-footer p {
+  margin: 0;
+}
+
+.book-footer .footer-meta {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.book-footer .footer-meta a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.book-footer .footer-meta a:hover {
+  text-decoration: underline;
+}
+
+/* ============================================
+   Reader Mode Styles
+   ============================================ */
+
+.reader-wrap {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: calc(100vh - 3.5rem);
+  transition: grid-template-columns 260ms ease;
+}
+
+.reader-wrap.reader-toc-collapsed {
+  grid-template-columns: 0 1fr;
+}
+
+/* -- Reader TOC (sticky sidebar) -- */
+.reader-toc {
+  position: sticky;
+  top: 3.5rem;
+  height: calc(100vh - 3.5rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  padding: calc(var(--baseline) * 1.5) var(--page-pad);
+  border-right: var(--hairline);
+  background: var(--color-bg);
+  transition: border-right-color 260ms ease, opacity 200ms ease, visibility 0s linear 0s;
+}
+
+.reader-wrap.reader-toc-collapsed .reader-toc {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  border-right-color: transparent;
+  transition: border-right-color 260ms ease, opacity 200ms ease, visibility 0s linear 200ms;
+}
+
+.toc-label {
+  margin: 0 0 1rem;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.toc-group {
+  margin-bottom: 1.25rem;
+}
+
+.toc-part {
+  margin: 0 0 0.5rem;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.toc-chapters {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.toc-chapters li {
+  margin: 0;
+}
+
+.toc-link {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  border-left: 2px solid transparent;
+  transition: all 150ms ease;
+}
+
+.toc-chapter-num {
+  flex-shrink: 0;
+  width: 1.5ch;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--color-muted);
+  text-align: right;
+  opacity: 0.6;
+}
+
+.toc-link:hover {
+  color: var(--color-accent);
+  border-left-color: var(--color-accent-soft);
+}
+
+.toc-link.toc-active {
+  color: var(--color-accent);
+  border-left-color: var(--color-accent);
+  font-weight: 700;
+}
+
+.toc-disabled {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  opacity: 0.4;
+  cursor: default;
+}
+
+.toc-sublist {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.75rem;
+}
+
+.toc-sublink {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  transition: all 150ms ease;
+}
+
+.toc-sublink:hover {
+  color: var(--color-accent);
+  border-left-color: var(--color-accent-soft);
+}
+
+.toc-sublink-num {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  opacity: 0.5;
+  min-width: 2.5ch;
+  text-align: right;
+}
+
+.toc-sublink.toc-sublink-active {
+  color: var(--color-accent);
+  border-left-color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* -- Reader Main Content -- */
+.reader-main {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.site-header--reader {
+  border-bottom: none;
+}
+
+.reader-progress {
+  position: fixed;
+  top: var(--header-h, 5rem);
+  left: 260px;
+  right: 0;
+  height: 3px;
+  background: var(--color-line-strong);
+  z-index: 99;
+  transition: left 260ms ease;
+}
+
+.reader-wrap.reader-toc-collapsed .reader-progress {
+  left: 0;
+}
+
+.reader-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--color-accent);
+  border-radius: 0;
+  transition: width 100ms ease;
+  will-change: width;
+}
+
+.reader-progress-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 var(--page-pad);
+  font-size: 0.82rem;
+  pointer-events: none;
+}
+
+.reader-chapter-label {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.reader-chapter-name {
+  color: var(--color-text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 20ch;
+}
+
+.reader-chapter {
+  scroll-margin-top: 10rem;
+}
+
+.reader-chapter [id] {
+  scroll-margin-top: 10rem;
+}
+
+.reader-chapter-label {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.reader-chapter-name {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.reader-content {
+  padding: 5rem calc(var(--page-pad) * 1.5) calc(var(--baseline) * 2);
+  max-width: 75ch;
+  margin-inline: auto;
+}
+
+.reader-content h1 {
+  margin-top: calc(var(--baseline) * 2.5);
+  margin-bottom: var(--baseline);
+  font-size: 2.0rem;
+  line-height: 1.2;
+  max-width: 30ch;
+}
+
+.reader-footer {
+  margin-top: calc(var(--baseline) * 2);
+}
+
+.reader-footer p {
+  margin: 0;
+}
+
+/* -- Responsive -- */
+.toc-fab,
+.toc-close {
+  display: none;
+}
+
+/* Desktop collapse handle for the TOC sidebar. */
+.toc-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 50%;
+  left: 260px;
+  width: 2rem;
+  height: 2rem;
+  border: var(--hairline);
+  border-radius: 50%;
+  background: var(--color-bg);
+  color: var(--color-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 120;
+  transform: translate(-50%, -50%);
+  transition: left 260ms ease, background 150ms ease, color 150ms ease, border-color 150ms ease;
+  padding: 0;
+}
+
+.toc-collapse:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.toc-collapse-icon {
+  display: flex;
+  transition: transform 260ms ease;
+}
+
+.reader-wrap.reader-toc-collapsed .toc-collapse {
+  left: 0.5rem;
+  transform: translate(0, -50%);
+}
+
+.reader-wrap.reader-toc-collapsed .toc-collapse-icon {
+  transform: rotate(180deg);
+}
+
+@media (max-width: 900px) {
+  .reader-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .toc-fab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    border: none;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 1.25rem;
+    cursor: pointer;
+    z-index: 150;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    opacity: 0.85;
+    transition: opacity 150ms;
+    padding: 0;
+  }
+
+  .toc-fab span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  .toc-fab:hover,
+  .toc-fab:active {
+    opacity: 1;
+  }
+
+  .reader-toc {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 200;
+    padding: 0;
+    background: var(--color-bg);
+    transform: translateX(-100%);
+    transition: transform 200ms ease;
+  }
+
+  .toc-collapse {
+    display: none;
+  }
+
+  .reader-toc.reader-toc-open {
+    transform: translateX(0);
+  }
+
+  .toc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    gap: 0.5rem;
+    padding: 1rem 0.75rem 1rem 1rem;
+    border-bottom: var(--hairline);
+    background: var(--color-bg);
+    z-index: 1;
+  }
+
+  .toc-header-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .toc-close {
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    border-radius: 50%;
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .reader-toc > nav {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem 1.5rem 1.5rem;
+  }
+
+  .reader-progress {
+    left: 0;
+    top: var(--header-h, 5rem);
+  }
+
+  .reader-progress-label {
+    left: 0;
+    right: 0;
+  }
+
+  .reader-content {
+    padding: calc(var(--baseline) * 1.5) var(--page-pad);
+  }
+
+  .chapter-nav-inner {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .chapter-link {
+    text-align: left;
+  }
+}
+
+/* ============================================
+   Print / Save-as-PDF styles (shared across
+   chapter pages and the all-in-one reader)
+   ============================================ */
+@page {
+  margin: 2cm 1.8cm;
+}
+
+@media print {
+  :root,
+  html,
+  body {
+    background: #fff;
+    color: #000;
+    font-size: 11pt;
+    line-height: 1.55;
+    /* Drop the ~68ch reading column so print uses the full page width. */
+    --prose-width: none;
+  }
+
+  a {
+    color: #000;
+    text-decoration: underline;
+    word-break: break-word;
+  }
+
+  /* Reveal where external links point. */
+  a[href^='http']::after {
+    content: ' (' attr(href) ')';
+    font-size: 0.82em;
+    font-weight: 400;
+  }
+
+  /* Force the printable region to black-on-white. The Dark theme otherwise
+     paints muted/light text and tinted backgrounds, so we re-assert them on
+     .book-article (which wraps every chapter on both page types) at a
+     specificity that beats the screen rules via source order. */
+  .book-article p,
+  .book-article ul,
+  .book-article ol,
+  .book-article td,
+  .book-article blockquote {
+    color: #000;
+  }
+
+  .book-article blockquote {
+    background: transparent;
+    border-left: 3px solid #999;
+    margin: 1.25rem 0;
+    padding: 0.2rem 0 0.2rem 1rem;
+    font-style: italic;
+  }
+
+  .book-article th {
+    background: #f4f4f4;
+  }
+
+  /* Hide site chrome that should never appear in a PDF. */
+  .site-header,
+  .site-nav,
+  .theme-toggle,
+  .book-footer,
+  .chapter-nav,
+  .reader-toc,
+  .reader-progress {
+    display: none;
+  }
+
+  /* The cookie banner is injected with an inline `display:flex`, which a
+     stylesheet cannot override without !important; visibility:hidden achieves
+     the same result (it is position:fixed, so it occupies no print space). */
+  #cookie-consent-banner {
+    visibility: hidden;
+  }
+
+  /* Full-width, unpadded reading column. */
+  .book-layout,
+  .book-content,
+  .reader-wrap,
+  .reader-main,
+  .reader-content,
+  .reader-chapter,
+  .book-article {
+    max-width: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    line-height: 1.55;
+  }
+
+  /* The reader page is a 260px + 1fr grid; with the TOC hidden for print
+     the 260px track would otherwise squeeze the chapter. Collapse it. */
+  .reader-wrap {
+    display: block;
+  }
+
+  /* Headings should not be width-constrained and must not dangle. */
+  .book-article h1,
+  .book-article h2,
+  .book-article h3,
+  .book-article h4 {
+    max-width: none;
+    page-break-after: avoid;
+    break-after: avoid-page;
+  }
+
+  .book-article h1 {
+    font-size: 1.9rem;
+    margin: 0 0 1rem;
+  }
+
+  .book-article h2 {
+    font-size: 1.45rem;
+    margin: 2rem 0 0.75rem;
+  }
+
+  .book-article h3 {
+    font-size: 1.2rem;
+    margin: 1.5rem 0 0.5rem;
+  }
+
+  .book-article h4 {
+    font-size: 1.05rem;
+    margin: 1.25rem 0 0.5rem;
+  }
+
+  /* Keep paragraphs and lists from splitting awkwardly. */
+  p,
+  li,
+  blockquote,
+  dd,
+  dt {
+    orphans: 3;
+    widows: 3;
+  }
+
+  /* Images and diagrams must fit the page and not split. */
+  img,
+  svg,
+  figure,
+  .architecture-diagram {
+    max-width: 100%;
+    height: auto;
+    page-break-inside: avoid;
+  }
+  /* Diagrams use theme CSS variables defined inline in each SVG. In Dark
+     mode those resolve to light-on-dark, which prints invisible on white.
+     The dark set is scoped to [data-theme='dark'] svg (specificity 0-1-1);
+     this selector (0-2-2) re-asserts the light palette in print. */
+  html[data-theme='dark'] .book-article svg {
+    --fg-title: #111827;
+    --fg-subtitle: #4b5563;
+    --arrow: #374151;
+    --indigo-bg: #eef2ff;
+    --indigo-border: #6366f1;
+    --indigo-label: #4338ca;
+    --indigo-code: #1e1b4b;
+    --indigo-note: #4b5563;
+    --green-bg: #ecfdf5;
+    --green-border: #10b981;
+    --green-label: #065f46;
+    --green-code: #064e3b;
+    --green-note: #4b5563;
+    --orange-bg: #fff7ed;
+    --orange-border: #f97316;
+    --orange-label: #9a3412;
+    --orange-code: #7c2d12;
+    --orange-footnote: #9a3412;
+    --footer-line: #e5e7eb;
+    --footer-text: #374151;
+    --footer-subtext: #4b5563;
+    --box-bg: #f3f4f6;
+    --box-border: #9ca3af;
+    --box-text: #374151;
+    --dashed-line: #6b7280;
+    --inset-bg: #f9fafb;
+    --inset-border: #9ca3af;
+    --inset-label: #374151;
+    --cell-bg: #ffffff;
+    --cell-border: #d1d5db;
+    --cell-text: #374151;
+    --cell-hl-bg: #dbeafe;
+    --cell-hl-border: #3b82f6;
+    --offset-label: #374151;
+    --segment-label: #1d4ed8;
+    --rose-bg: #fff1f2;
+    --rose-border: #f43f5e;
+    --rose-label: #be123c;
+    --rose-code: #881337;
+    --rose-note: #4b5563;
+    --amber-bg: #fffbeb;
+    --amber-border: #f59e0b;
+    --amber-label: #b45309;
+    --amber-code: #78350f;
+    --amber-note: #4b5563;
+    --teal-bg: #f0fdfa;
+    --teal-border: #14b8a6;
+    --teal-label: #0f766e;
+    --teal-code: #134e4a;
+    --teal-note: #4b5563;
+    --incr-bg: #eff6ff;
+    --incr-border: #3b82f6;
+    --incr-label: #1d4ed8;
+    --scn-steady: #3b82f6;
+    --scn-catchup: #f59e0b;
+    --scn-hlt: #8b5cf6;
+    --scn-fixed: #0d9488;
+    --scn-turbo: #ef4444;
+    --blue-bg: #eff6ff;
+    --blue-border: #3b82f6;
+    --blue-label: #1d4ed8;
+    --blue-code: #1e3a8a;
+    --blue-note: #4b5563;
+  }
+
+
+  figure {
+    margin: 1.25rem 0;
+    text-align: center;
+  }
+
+  figcaption {
+    font-size: 0.85rem;
+    color: #444;
+    margin-top: 0.4rem;
+  }
+
+  /* Code: monochrome on a light panel, for both themes. */
+  .astro-code,
+  .astro-code span {
+    color: #1a1a1a;
+  }
+
+  .astro-code {
+    background-color: #f4f4f4;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* The Dark theme sets code color at :root[data-theme='dark'] .astro-code
+     span (specificity 0-3-0); this selector ties it and — loading after
+     global.css — wins. */
+  :root[data-theme='dark'] .astro-code,
+  :root[data-theme='dark'] .astro-code span {
+    color: #1a1a1a;
+  }
+
+  pre {
+    background: #f4f4f4;
+    border: 1px solid #ddd;
+    padding: 0.75rem;
+    page-break-inside: avoid;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  :not(pre) > code {
+    font-size: 0.9em;
+    padding: 0.1em 0.3em;
+    border: 1px solid #e3e3e3;
+    border-radius: 3px;
+    background: #f4f4f4;
+    color: #1a1a1a;
+  }
+
+  /* Tables */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1.25rem 0;
+    page-break-inside: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr,
+  td,
+  th {
+    page-break-inside: avoid;
+  }
+
+  .book-article th,
+  .book-article td {
+    border: 1px solid #ccc;
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  /* Elements that should never split across pages. */
+  h1,
+  h2,
+  h3,
+  h4,
+  table,
+  figure,
+  blockquote,
+  .architecture-diagram,
+  svg,
+  pre,
+  img {
+    page-break-inside: avoid;
+  }
+
+  /* When printing one chapter from the all-in-one reader, hide every other
+     chapter section so the PDF contains only the selected chapter. */
+  body.print-single-chapter .reader-chapter:not([data-printing]) {
+    display: none;
+  }
+
+  body.print-single-chapter .reader-chapter-divider {
+    display: none;
+  }
+}

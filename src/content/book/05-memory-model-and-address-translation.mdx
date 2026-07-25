@@ -1,0 +1,415 @@
+---
+title: "Memory Model and Address Translation"
+description: "Segmentation, linear and physical addresses, DOSBox-X's software TLB, and PageHandler memory mapping, followed by A20, EMS, XMS and UMB as higher-level consequences of the PC's constrained address space."
+order: 5
+chapterSlug: "memory-model-and-address-translation"
+part: "foundations"
+---
+# Chapter 5 — Memory Model and Address Translation {#chapter-5-memory-model-and-address-translation}
+
+*(Source references below are against `joncampbell123/dosbox-x`, commit `192c1756`, cloned 2026-07-25. File/line numbers will drift as the project moves; treat them as coordinates into a moving target, not fixed citations.)*
+
+## 5.1 From "When" to "Where" {#from-when-to-where}
+
+@chapter(time-in-dosbox-x) established what guest time means and how DOSBox-X represents it as several interacting timing domains. @chapter(main-loop-and-event-scheduler) answered the next question: given that the CPU only ever runs in short, scheduler-rationed bursts, how does DOSBox-X decide *when* any given instruction actually executes? This chapter answers the companion question of space: when that instruction finally does execute — say, a `MOV [BX+SI], AL` — where does the byte it touches actually land? The axis shifts from *when* to *where*.
+
+The two questions are related. @chapter(main-loop-and-event-scheduler) showed that DOSBox-X doesn't let the CPU freely consume time; it hands out cycles from a budget, checked against a queue, every time the loop turns over. This chapter shows that DOSBox-X doesn't let the CPU freely address memory either: every memory access passes through DOSBox-X's memory-access machinery. In the common case that machinery reduces to a direct TLB-indexed host-memory access; when the address is not directly backed by host memory, it dispatches through a `PageHandler`. Just as @chapter(main-loop-and-event-scheduler)'s scheduler was a queue the CPU wasn't allowed to run past, this chapter's memory model is a table the CPU isn't allowed to reach around. Neither subsystem trusts the CPU core to do the honest thing on its own; both wrap it in a layer that enforces the real machine's rules before the instruction's effect becomes visible.
+
+By the end of this chapter you should be able to trace a 16-bit real-mode `segment:offset` address — a 16-bit segment and a 16-bit offset — all the way down to the specific `PageHandler` that decides what actually happens when that address is touched. (The `segment:offset` form is architectural; a "far pointer" is one compiler/language representation of it.) We'll trace one concrete instruction, `MOV [BX+SI], AL`, the whole way down. The whole journey looks like this, and it's worth keeping this picture in view as a map for the rest of the chapter:
+
+```text
+segment:offset
+      |
+      v
+ segmentation (Segs.phys[] + offset)
+      |
+      v
+ linear address
+      |
+      | paging?
+      +---- no ----> physical address
+      |
+      +---- yes ---> TLB lookup
+                       |
+                  hit  |  miss
+                       |
+                  physical
+                  address
+                       ^
+                       |
+                 page tables
+                       |
+                       v
+                  physical
+                  address
+                       |
+                       v
+                 memory mapping
+                /           \
+              RAM       PageHandler
+```
+
+This is a *conceptual* architectural pipeline. The TLB is not a stage "after" page tables in the sense of always walking them — it is the cache that holds the *result* of translation so the common path never has to walk page tables at all. That distinction matters when §5.7 shows a change in address interpretation forcing a TLB flush.
+
+## 5.2 The Problem: A 20-Bit Address Space, 16-Bit Registers {#the-problem-a-20-bit-address-space-16-bit-registers}
+
+The 8088/8086 exposes a 1 MB (20-bit) physical address space, but every general-purpose register is 16 bits wide — a 16-bit offset can span only a 64 KB segment. Intel's answer was **segmentation**: an address is expressed as a 16-bit *segment* and a 16-bit *offset*, combined as
+
+```text
+physical_address = (segment << 4) + offset
+```
+
+That single shift-and-add is, arguably, the most consequential line of arithmetic in PC history. It's why the `segment:offset` form needs two 16-bit halves instead of one 32-bit value; why the same physical byte is reachable through more segment:offset pairs than you'd expect (segments overlap in 16-byte steps, so `0x1000:0x0010` and `0x1001:0x0000` land on the same byte); and why compilers targeting this architecture — including the Microsoft C compilers this book's companion reverse-engineering project spends so much time on — represented such addresses with pointer qualifiers (`near`, `far`, `huge`) that have no equivalent on a flat-address-space machine. A "far pointer" is one such *language-level* representation of a `segment:offset` address; the addressing mechanism itself is architectural and predates any compiler. None of that is DOSBox-X-specific. It's 8086 architecture, and DOSBox-X's entire memory model exists to reproduce its consequences faithfully.
+
+## 5.3 Segment Registers in DOSBox-X: `Segs.phys[]` {#segment-registers-in-dosbox-x-segs-phys}
+
+DOSBox-X keeps the CPU's segment state in a `Segments` structure (declared in `include/regs.h`), and the translation from segment register to physical base address is about as literal as you'd hope:
+
+```cpp
+static INLINE PhysPt SegPhys(SegNames index) {
+    return Segs.phys[index];
+}
+```
+
+`Segs.phys[]` isn't computed on every access — it's cached whenever a segment register is loaded. For real mode, the cache-fill is exactly the textbook shift:
+
+```cpp
+Segs.phys[cs] = (PhysPt)SegValue(cs) << 4u;
+Segs.phys[ds] = (PhysPt)SegValue(ds) << 4u;
+Segs.phys[es] = (PhysPt)SegValue(es) << 4u;
+Segs.phys[fs] = (PhysPt)SegValue(fs) << 4u;
+```
+
+That's the segment base the instruction decoder adds an effective offset to directly, with no further math per memory access. The effective offset itself comes from the instruction's addressing mode — for `MOV [BX+SI], AL`, it is `BX + SI` — not necessarily from a "far pointer". Protected-mode segment loads take a different path entirely — `Segs.phys[cs] = cs_desc.GetBase()`, pulling the base out of a descriptor table entry instead of shifting the selector — but the *destination* is the same field. Everything downstream of `SegPhys()` doesn't need to know or care whether the machine is currently in real or protected mode; by the time code reaches this function, the segment-to-base translation has already happened and been cached. This is worth remembering later, when protected-mode addressing enters the picture: the fork in behavior happens at segment-load time, not at memory-access time.
+
+This chapter is concerned with the address-translation *consequence* of segmentation — obtaining the segment base — rather than the full protection semantics of protected mode (descriptor validation, privilege and limit checks, the present bit, expand-down segments, exceptions). Those belong to the CPU architecture and are examined when the CPU core is introduced.
+
+For the running example, `MOV [BX+SI], AL`, suppose:
+
+```text
+DS = 1234h
+BX = 0100h
+SI = 0020h
+
+Segs.phys[DS] = 12340h          (cached segment base)
+
+effective offset = BX + SI = 0120h
+
+linear / physical address
+    = 12340h + 0120h
+    = 12460h
+```
+
+That single address is what the rest of the chapter keeps following: `12460h` is the linear address, the input to any paging stage, then the index into the TLB, then a physical page backed by RAM or a `PageHandler`.
+
+## 5.4 Linear, Physical, and Why DOSBox-X Bothers With Both {#linear-physical-and-why-dosbox-x-bothers-with-both}
+
+So far this looks like it should be a one-step process: segment plus offset gives you a physical address, done. On the 8086 that's true, because there's no paging — segmentation *is* the entire address translation story. But DOSBox-X also has to emulate 386-and-later CPUs, where Intel added a second translation stage on top of segmentation: paging, which maps a **linear address** (the output of segmentation) through page tables to a **physical address**.
+
+DOSBox-X's memory code distinguishes these explicitly — you'll see both `LinearPt` and `PhysPt` types used deliberately throughout `paging.h` and `memory.cpp`, not interchangeably. On real-mode 8086-class code, linear and physical addresses are numerically identical (paging is simply off, or doesn't exist for the emulated CPU type), and segmentation's output *is* the final physical address. On a 386 or later with paging enabled, segmentation still runs first exactly as described above, but its output is now treated as a linear address that then goes through one more lookup — the page tables — before hitting a real physical location. DOSBox-X models this as a strict pipeline: **logical-to-linear resolution (segmentation) is applied first, via the cached segment base in `Segs.phys[]` established at segment-load time (§5.3), and only then does an optional paging stage either pass the linear address through unchanged (paging disabled) or remap it (paging enabled).**
+
+For the running example, `MOV [BX+SI], AL` produced `12460h` as the linear address out of segmentation (§5.3). On a 386+ CPU with paging enabled, `12460h` would be the linear address fed into one more lookup before reaching a physical page; in real mode — the case the rest of this chapter traces — linear and physical coincide, so `12460h` is already final and is the value the next stages take as input.
+
+## 5.5 The TLB: Making the Common Case Fast {#the-tlb-making-the-common-case-fast}
+
+A **translation lookaside buffer (TLB)** is a cache for the *result* of address translation: rather than re-walking page tables on every access, it keeps the most recent linear→physical mappings in a fast lookup so the common path skips the walk entirely. If paging adds a second translation stage on top of segmentation, a naive emulator would do exactly that walk on every access — far too slow in software. So the natural question is how DOSBox-X makes the stage affordable; the answer is a cache. DOSBox-X avoids the walk with a TLB, but it is a TLB in name and function rather than physical form. A hardware TLB is a small, fully-associative cache — typically dozens to a few hundred entries — because it must live in silicon and be searched in a single clock cycle. DOSBox-X's TLB instead caches the *consequence* of translation — a direct host-memory pointer and/or a `PageHandler` per page — in a giant software lookup table indexed directly by page number, with no associativity or eviction logic at all:
+
+The TLB here is a set of parallel arrays, one entry per 4 KB page of the entire addressable linear space. `TLB_SIZE` is `1024*1024` entries — that's the full 4 GB linear address range divided by the 4 KB page size (4 GB / 4 KB = 1,048,576 = 1024×1024), one slot for every 4 KiB page in the 32-bit linear address space this TLB represents. Note that this is an implementation choice in the emulated CPU's software model, not a property of the guest architecture: a real 386 does not allocate one hardware entry per page — it uses a tiny associative cache. DOSBox-X trades host RAM for the simplicity of a direct page-indexed table:
+
+```cpp
+static INLINE HostPt get_tlb_read(const LinearPt address) {
+    return paging.tlb.read[address>>12];
+}
+static INLINE PageHandler* get_tlb_readhandler(const LinearPt address) {
+    return paging.tlb.readhandler[address>>12];
+}
+```
+
+Each entry answers the question "for this page, do I already know the fast way to service a read/write, or do I need to fall back to a handler?" It's a deliberately brute-force trade: the structure is *five* parallel `TLB_SIZE` arrays — two `HostPt` pointer arrays (`read`, `write`), two `PageHandler*` arrays (`readhandler`, `writehandler`), and one `phys_page` array — consuming exactly 36 MiB of host RAM on a 64-bit host (four 8-byte-pointer arrays plus one 4-byte `phys_page` array = 36 bytes per page × 1,048,576 pages). Those are a million *software* page-index slots, not the handful of associative hardware TLB entries a real CPU would hold. It is a fixed, willingly-paid price for never having to implement cache associativity, replacement policy, or any of the complexity a real hardware TLB needs to fit in silicon. And the actual read path checks exactly that:
+
+```cpp
+static INLINE uint8_t mem_readb_inline(const LinearPt address) {
+    const HostPt tlb_addr = get_tlb_read(address);
+    if (tlb_addr) return host_readb(tlb_addr + address);
+    else return (uint8_t)(get_tlb_readhandler(address))->readb(address);
+}
+```
+
+This is the fast path/slow path split that shows up everywhere in emulator design, and it's worth sitting with:
+
+- **Fast path** (`tlb_addr` is non-null): the page maps directly onto real host memory (ordinary conventional RAM, for instance), so the read is just a host pointer dereference — `host_readb(tlb_addr + address)` — as cheap as reading memory in any other C++ program.
+- **Slow path** (`tlb_addr` is null): the page is backed by something that isn't a flat memory buffer — a memory-mapped I/O region, a VGA framebuffer with side effects on write, an EMS page frame that needs bank-switching logic — so the access is dispatched through a `PageHandler` virtual call instead.
+
+For the running example, `12460h` belongs to page `0x12` (the address shifted right by 12) with in-page offset `0x460` (the low 12 bits); the TLB lookup `tlb.read[0x12]` decides whether that page is a fast-path host buffer or a slow-path `PageHandler`. Every one of the millions of instructions a DOS program executes per second wants the fast path. The slow path exists for the comparatively rare pages where "memory" isn't really memory — it's a device.
+
+## 5.6 From Address Translation to Memory Mapping {#from-address-translation-to-memory-mapping}
+
+Up to this point the chapter has been doing one job: **address translation** — turning a `segment:offset` into a physical address via segmentation, then optionally paging. That job is finished the instant you hold a physical address. But a physical address is not the end of the story; it is only the point where a *second*, separate question begins. **Memory mapping** is the question of what actually *backs* that physical address: ordinary RAM, a device, or nothing at all. Translation says *where* an address points; mapping says *what is sitting at that address*. For the running example, `12460h` is the physical address (§5.3–§5.5); now the only remaining question is what backs physical page `0x12` — and the answer might be flat RAM, or it might be a device window.
+
+That second question is exactly what `PageHandler` answers, and it is where `PageHandler` enters. `PageHandler` (`include/paging.h`) is the abstraction that makes the memory-mapping layer possible — its shape should look familiar if you internalized `PIC_AddEvent`'s role in @chapter(main-loop-and-event-scheduler): it's the memory-space equivalent of "any device can register itself into the mechanism that decides what happens":
+
+```cpp
+class PageHandler {
+public:
+    virtual uint8_t  readb(PhysPt addr);
+    virtual uint16_t readw(PhysPt addr);
+    virtual uint32_t readd(PhysPt addr);
+    virtual void     writeb(PhysPt addr, uint8_t val);
+    virtual void     writew(PhysPt addr, uint16_t val);
+    virtual void     writed(PhysPt addr, uint32_t val);
+    virtual HostPt   GetHostReadPt(PageNum phys_page);
+    virtual HostPt   GetHostWritePt(PageNum phys_page);
+    // ...checked variants for readb_checked, writeb_checked, etc.
+    Bitu flags;
+};
+```
+
+Any subsystem that needs to intercept memory accesses to a range of addresses — VGA's framebuffer window, a memory-mapped BIOS ROM area, an EMS page frame — implements this interface and registers it for a page range via `MEM_RegisterHandler(phys_page, handler, page_range)`. From that point on, when the TLB entry for a page resolves to a handler rather than a direct host-memory pointer (the slow path from §5.5), accesses in that range route through the handler's virtual functions instead of a raw pointer dereference. This is precisely why VGA memory writes can trigger side effects (updating a shadow buffer, marking a region dirty for the renderer) that a plain RAM write never would — from the CPU core's point of view, `mov [es:di], al` looks identical whether it's touching conventional RAM or the VGA aperture; the difference is entirely which `PageHandler` that page was mapped to.
+
+The split between the `read`/`write` pointer arrays and the `readhandler`/`writehandler` arrays is not redundant bookkeeping. Mapping a page read-only versus read-write is a real distinction: ordinary RAM maps the same host buffer for both, but a ROM region's write handler may reject or ignore writes, and a video aperture often maps a different backing (or none at all) for writes than for reads, precisely so side effects can be caught. A `PageHandler` therefore describes the *access semantics* of a physical page, not just a location. Note the terminology guard: not every physical address has a distinct `PageHandler` — most conventional RAM is served through a default RAM handler, and ranges that are simply unmapped back to nothing. "Memory mapping" is the general question; `PageHandler` is the specific mechanism DOSBox-X uses to implement it for the pages that need more than flat RAM. You'll see this exact mechanism drive VGA memory behavior in the graphics chapter and EMS page-frame bank switching in the memory-expansion discussion later in this book.
+
+## 5.7 The A20 Gate: A Historical Wart, Modeled Faithfully {#the-a20-gate-a-historical-wart-modeled-faithfully}
+
+So far we've treated a physical address as if it always meant "ordinary RAM." It doesn't — and some architectural rules change what an address *means*, not just where it points. The clearest example is a faithful model of a bug: the A20 gate exists for no better reason than backward compatibility, and DOSBox-X models it anyway because real DOS software depends on the bug's behavior.
+
+The 8086's physical address bus was only 20 bits wide, so the CPU could drive addresses no higher than `0xFFFFF`. Segment arithmetic can compute a value larger than 20 bits, but the 8086 has no 21st address line to put that bit onto the bus — so any result with bit 20 set simply cannot be represented, and the address wraps to `0x00000`. This wasn't a hypothetical edge case; it happened routinely with ordinary segment:offset addresses near the top of the address space. Consider `FFFF:0010` — a combination chosen because its calculated address is exactly `0x100000`, the first byte past the 20-bit (1 MB) range:
+
+```text
+FFFF:0010
+   = (0xFFFF << 4) + 0x0010
+   = 0xFFFF0 + 0x00010
+   = 0x100000        <- 21 bits: one bit past what the 8086 can address
+
+A20 disabled (8086 behavior): bit 20 is dropped -> wraps to 0x000000
+A20 enabled  (full 286+ addressing): the full value stands -> 0x100000
+```
+
+It is worth stating plainly: the A20 gate is **not** a paging mechanism. It does not translate or remap addresses — it only chooses whether bit 20 of an address is allowed to be driven at all. Paging (the linear-to-physical stage from §5.4) is a separate, later 386 facility; A20 is a single on/off switch on one address line, and the two must not be conflated. With that distinction in mind:
+
+On an 8086, that arithmetic can only land at `0x00000` — there's no 21st address line for the result to go anywhere else. Later processors (286 and beyond) actually *have* an address line A20 that the 8086 never did; the A20 gate controls whether that line is driven. With A20 enabled, the identical instruction, with the identical segment and offset values, legitimately reaches into the first byte past the 1 MB boundary instead. Same code, same registers, two different physical destinations, depending entirely on the state of one gate. The 80286 added more address lines and, strictly by the datasheet, should have been "more correct" than the 8086 by *not* wrapping. But some existing DOS software had come to depend on that wraparound behavior (deliberately or accidentally), so IBM AT motherboards added a way to force address line 20 low regardless of what the CPU calculated — gating it through, of all things, a spare pin on the keyboard controller. This became known as the **A20 gate**, and XMS/HIMEM.SYS uses A20 control as part of managing the HMA and extended memory, toggling the line so that both wraparound-dependent old software and extended-memory-using new software can coexist.
+
+DOSBox-X doesn't literally emulate a 21st address line being physically masked. It models the same *effect* — addresses that differ only in bit 20 aliasing onto the same memory when A20 is disabled — through a page-alias mask applied at the memory-page level:
+
+```cpp
+void MEM_A20_Enable(bool enabled) {
+    ...
+    if (!a20_fake_changeable && (memory.mem_alias_pagemask & 0x100ul)) {
+        if (memory.a20.enabled) memory.mem_alias_pagemask_active |= 0x100ul;
+        else memory.mem_alias_pagemask_active &= ~0x100ul;
+        PAGING_ClearTLB();
+    }
+}
+```
+
+Notice the last line: toggling A20 forces a full TLB flush (`PAGING_ClearTLB()`). That's a direct, necessary consequence of everything in @section(memory-model-and-address-translation/the-tlb-making-the-common-case-fast): the TLB's fast-path entries were computed under the *old* aliasing rule, and if A20's state just changed, those cached host pointers may now point at the wrong alias of a page. This is a good concrete illustration of why a cache like the TLB needs explicit invalidation hooks wired into anything that can change what an address "means" — but two cases that are easy to conflate must be kept separate. Page-table modifications and A20 toggling both change how a *linear* address maps to a *physical* one, so both must flush the TLB. A *segment* register load, by contrast, does **not** flush the TLB: it only updates the cached segment base in `Segs.phys[]` (§5.3), because segmentation and paging are distinct stages — changing a segment selector changes where the linear address comes from, not how an already-computed linear address maps. Only a change to the linear→physical mapping itself justifies a TLB flush.
+
+## 5.8 Beyond Conventional Memory: EMS, XMS, and UMBs {#beyond-conventional-memory-ems-xms-and-umbs}
+
+So far this chapter has followed a single memory access all the way down to its physical backing — segmentation, paging, the TLB, and the handler behind each page. Now the axis changes again, from the CPU's address *mechanism* to a higher-level question: how did DOS software actually obtain memory that didn't fit into the conventional 640 KB region in the first place? Segmentation and the A20 gate explain how a 16-bit-register CPU *reaches* a 20-bit-or-larger address space, but they don't explain how DOS programs — nominally limited to a 1 MB address space, and in practice usually much less once the OS, drivers, and TSRs (terminate-and-stay-resident programs) claim their share — got access to more memory than that at all. In other words the question stops being about how the CPU *addresses* memory and becomes about how DOS software *obtains* it. Before getting into how each scheme solves that problem, it's worth having the baseline picture in view — where "conventional memory" actually ends and what the rest of that 1 MB is spoken for by:
+
+```text
+0x00000 +-----------------------------------+
+        | Conventional Memory (640 KB)      |
+        | DOS kernel, TSRs, running program |
+0x9FFFF +-----------------------------------+
+0xA0000 | Video RAM (VGA)                   |
+0xAFFFF +-----------------------------------+
+0xB0000 | Video RAM (mono/CGA text)         |
+0xBFFFF +-----------------------------------+
+0xC0000 | Video BIOS ROM                    |
+0xC7FFF +-----------------------------------+
+0xC8000 | Adapter ROM / unused gaps         |
+        | (candidate space for UMBs, §below)|
+0xEFFFF +-----------------------------------+
+0xF0000 | System BIOS ROM                   |
+0xFFFFF +-----------------------------------+
+======== 1 MB boundary ========
+0x100000| Extended memory                   |
+        | (needs A20 + protected mode/XMS   |
+        |  to reach from real mode)         |
+        +-----------------------------------+
+```
+
+The 384 KB between conventional memory's top and the 1 MB line — `0xA0000`–`0xFFFFF` — is usually called the **upper memory area (UMA)**, and every scheme this section covers either lives inside it (EMS's page frame, UMBs) or exists specifically to reach past it (XMS). Three mechanisms emerged to address the "not enough memory" problem this map makes visible, and DOSBox-X implements all three — but they are not three equivalent CPU address-translation tricks. They operate at different levels: EMS is a bank-switched *window* inside the 1 MB space, XMS is an *API* for managing memory genuinely above 1 MB, and UMB is an *allocation* mechanism for the unused gaps of the upper memory area. Keeping those levels distinct makes the rest of this section easier to follow:
+
+Don't conflate the two near-identical acronyms: the **UMA** is a fixed *region* (the 384 KB band `0xA0000`–`0xFFFFF`), whereas a **UMB** is a *block* DOS carves out of the UMA's unused gaps. Every UMB lives inside the UMA.
+
+| Mechanism | Primary problem it solves | What it abstracts |
+| --- | --- | --- |
+| **EMS** | The 1 MB address space is too small to *hold* all of a program's data at once | A bank-switched page frame — swap 16 KB banks of expanded memory into a fixed window |
+| **XMS** | Need memory *genuinely above* 1 MB that real mode can't directly address | An API (HIMEM.SYS, reached via the driver entry point obtained through `INT 2Fh` `AX=4300h`/`4310h`) managing EMBs and the HMA |
+| **UMB** | The UMA has unused gaps going to waste while conventional memory is scarce | DOS allocation over those gaps, via the same MCB chain used below 640 KB |
+
+- **EMS (Expanded Memory Specification)** predates and works around the address-space limit entirely differently from A20/paging tricks: it exposes extra memory through a small, fixed *page frame* window inside the normal 1 MB address space, and software swaps 16 KB banks of "expanded" memory into and out of that window via I/O-port-driven bank switching. For readers who haven't encountered bank switching before, the shape of it is:
+
+```text
+EMS memory (far more than fits in the window)
+
+  +--------+
+  | Bank 0 |
+  | Bank 1 |
+  | Bank 2 |
+  | Bank 3 |
+  |  ...   |
+  +--------+
+      ^
+      | one bank at a time, swapped in on request
+      |
+  +--------------+
+  | 64 KB frame  |   <- lives inside the normal 1 MB address space
+  +--------------+
+```
+
+Software never sees all of expanded memory at once — only whichever bank currently happens to be switched into the frame. Asking for a different bank means issuing an I/O-port command and waiting for the *same* address range to now mean something different. From the CPU's perspective this is just another `PageHandler`-backed region (@section(memory-model-and-address-translation/from-address-translation-to-memory-mapping)) — reads and writes to the page frame route through EMS's handler, which decides which physical bank of expanded memory is currently switched into view. On real hardware that bank switching was driven by I/O-port writes to the EMS controller; DOSBox-X doesn't model that controller literally. Instead `EMM_MapPage` in `src/ints/ems.cpp` calls `PAGING_MapPage`, which re-points the page-frame's `PageHandler` at a different physical bank — so the net effect the guest program sees is identical, just reached through the memory-mapping machinery of §5.6 rather than emulated I/O registers.
+
+A program talks to EMS through `INT 67h`, calling into whatever expanded-memory manager is currently installed, and DOSBox-X's own implementation (`src/ints/ems.cpp`) places the page frame exactly where classic real DOS setups conventionally did — segment `0xE000`:
+
+```cpp
+unsigned short EMM_PAGEFRAME = 0xE000;
+```
+
+with `INT67_Handler()` in the same file servicing the actual calls — so a guest program probing for expanded memory support and asking where its page frame lives will get back precisely the answer a real EMS driver from the 1980s would have given it.
+
+*(Historical context.)* EMS is usually written as "LIM EMS" — Lotus/Intel/Microsoft — and that name records exactly why it exists. It wasn't a hardware vendor's initiative or an abstract engineering exercise: it was announced in spring 1985 as a joint Lotus and Intel project (Microsoft signed on shortly after, for the version 3.2 revision), driven by a very specific and very commercial problem — Lotus 1-2-3, the dominant spreadsheet of the era, kept running spreadsheets up against the 640 KB conventional memory ceiling, and Lotus needed a way to let its own product keep growing without waiting for DOS itself to change. The bank-switched page-frame design this section just walked through was, in other words, one company's memory limitation shaping an entire industry standard — which is also why EMS optimizes so specifically for the access pattern a spreadsheet actually has (large, mostly sequential regions of data that don't all need to be touched at once), rather than for something closer to general-purpose flat addressing.
+- **XMS (Extended Memory Specification)** takes the opposite approach: rather than bank-switching a window, it exposes memory genuinely above 1 MB and relies on the A20 gate being enabled (@section(memory-model-and-address-translation/the-a20-gate-a-historical-wart-modeled-faithfully)) and brief excursions into protected mode (on 286+ CPUs) to physically copy data into and out of that extended address space, coordinated through HIMEM.SYS.
+
+A program locates the XMS driver through `INT 2Fh` rather than calling it directly — first checking whether one is installed, then asking for its entry point, both of which show up as literal case labels in DOSBox-X's `src/ints/xms.cpp`:
+
+```cpp
+case 0x4300:    /* XMS installed check */
+    ...
+case 0x4310:    /* XMS handler seg:offset */
+    ...
+```
+
+Once a program has that entry point, it calls it directly (a far call, not another interrupt) to allocate, free, move, and lock **Extended Memory Blocks (EMBs)**, and to claim the **HMA** — the ~64 KiB region immediately above 1 MB (technically 64 KiB minus 16 bytes) that's reachable from real mode once A20 is enabled, and the same sliver of memory the DOS kernel itself typically loads into via `DOS=HIGH`, to keep its own footprint out of conventional memory. The "minus 16 bytes" is exact: the highest real-mode segment:offset pair `FFFF:FFFF` computes to `0x10FFEF`, which is precisely 16 bytes short of the next 64 KiB boundary at `0x10FFFF` — so the HMA is the 64 KiB window `0x100000`–`0x10FFFF` minus that unreachable top sliver. The shape of it:
+
+```text
+Real-mode program
+      |
+      | far-call to driver entry point,
+      | obtained via INT 2Fh, AX=4310h
+      v
+HIMEM.SYS (XMS driver)
+      |
+      +--> manages the A20 line
+      +--> manages HMA allocation (~64 KiB minus 16 bytes above 1 MB,
+      |     reachable in real mode once A20 is on)
+      +--> allocates / frees / moves / locks
+            Extended Memory Blocks (EMBs)
+                  |
+                  v
+            Extended memory above 1 MB
+```
+
+Because real mode still can't address anything past 1 MB except through that narrow HMA window, accessing the contents of an EMB from a real-mode program is normally done through XMS services such as the move operation, with the XMS implementation using protected-mode or related mechanisms internally to reach the extended-memory addresses — not by handing the program a flat segment:offset pointer to the EMB. That driver-mediated access is the kind of cost EMS's simpler bank-switching model was built to avoid.
+
+Both EMS and XMS solve the "more memory" problem by reaching *outside* the conventional 1 MB address space — one through a window, one through genuine above-1MB addressing. **UMBs (Upper Memory Blocks)** solve a related but distinct problem entirely *within* it. Between the top of conventional memory (640 KB, segment `0xA000`) and the 1 MB boundary sits address space reserved for video memory, the EMS page frame, option ROMs, and the system BIOS — but on most real machines those reserved regions have gaps that nothing occupies — and DOSBox-X emulates the resulting DOS-visible memory layout, not necessarily the hardware mechanism that produced it. A UMB is DOS treating one of those gaps as ordinary, allocatable memory, giving TSRs and device drivers somewhere to live other than the increasingly precious 640 KB every DOS program had to share.
+
+**REAL 386+ SYSTEM** — how a real EMM386-style driver produced UMBs:
+
+```text
+Upper Memory Area (0xA0000-0xFFFFF)
+  +----------+----------+----------+----------+----------+
+  |  Video   | ROM      |  unused  | ROM      |  unused  |
+  |   RAM    | (in use) |   gap    | (in use) |   gap    |
+  +----------+----------+----------+----------+----------+
+                               |                     |
+                     EMM386.EXE-style driver aliases
+                     extended memory into these gaps
+                     via V86-mode paging (386+ only)
+                               |                     |
+                               v                     v
+                     those gaps become allocatable UMBs,
+                     linked into DOS's allocation chain by
+                     DOS=UMB, then handed out to TSRs and
+                     drivers loaded via DEVICEHIGH=/LOADHIGH
+                      instead of eating into conventional memory
+```
+
+**DOSBox-X (emulated)** — the same UMBs reached without any V86 paging:
+
+```text
+Upper Memory Area (0xA0000-0xFFFFF)
+  +----------+----------+----------+----------+----------+
+  |  Video   | ROM      |   UMB    | ROM      |   UMB    |
+  |   RAM    | (in use) |   gap    | (in use) |   gap    |
+  +----------+----------+----------+----------+----------+
+                               |                     |
+                   DOS_BuildUMBChain() carves the
+                   unused gaps into MCB-described blocks
+                               |                     |
+                               v                     v
+                   those blocks are linked into DOS's
+                   allocation chain by DOS_LinkUMBsToMemChain(),
+                   then handed out to TSRs/drivers via
+                   DEVICEHIGH=/LOADHIGH instead of
+                   eating into conventional memory
+```
+
+*(The first diagram shows how a real EMM386-style driver aliased extended memory into the UMA on actual 386+ hardware via V86-mode paging. DOSBox-X does not internally run an EMM386/V86 paging system; the second diagram shows that it emulates the same DOS-visible memory configuration — including the UMB gaps linked into the allocation chain — through its own memory and DOS allocation machinery (`DOS_BuildUMBChain()` and `DOS_LinkUMBsToMemChain()`).)*
+
+DOSBox-X builds this UMB region explicitly at boot, in `DOS_BuildUMBChain()` (`src/dos/dos_memory.cpp`):
+
+```cpp
+uint16_t first_umb_seg = 0xd000;
+uint16_t first_umb_size = 0x2000;
+...
+void DOS_BuildUMBChain(bool umb_active, bool /*ems_active*/) {
+    ...
+    if (umb_active && (machine!=MCH_TANDY) && seg_limit >= (0x10000+0x1000-1)
+        && first_umb_seg < GetEMSPageFrameSegment()) {
+
+        dos_infoblock.SetStartOfUMBChain((uint16_t)UMB_START_SEG);
+        dos_infoblock.SetUMBChainState(0);   // UMBs not linked yet
+
+        DOS_MCB umb_mcb(first_umb_seg);
+        umb_mcb.SetPSPSeg(0);                // currently free
+        umb_mcb.SetSize(first_umb_size-1);
+        umb_mcb.SetType(DOS_MCB::MCBType::LastBlock);
+        ...
+```
+
+`first_umb_seg = 0xD000` — segment `0xD000`, comfortably above conventional memory's top and, per the guard condition, below wherever the EMS page frame has been placed — is where DOSBox-X carves out a UMB region and describes it using exactly the same `DOS_MCB` (Memory Control Block) structure the DOS kernel uses to track ordinary conventional memory allocations. This is worth pausing on: a UMB isn't a separate memory-management scheme running in parallel with conventional memory allocation — it's the *same* MCB-linked-list mechanism DOS already uses below 640 KB, just describing a block of address space that happens to sit above it.
+
+That similarity is also exactly why UMBs need a mechanism conventional memory never does: **linking and unlinking from the main allocation chain on demand.** `DOS_LinkUMBsToMemChain()` walks the existing MCB chain to find its current last block, then either splices the UMB region in as a continuation of that chain or removes it again:
+
+```cpp
+bool DOS_LinkUMBsToMemChain(uint16_t linkstate) {
+    ...
+    switch (linkstate) {
+        case 0x0000:    // unlink
+            if (prev_mcb.isValid() && !prev_mcb.isLastMCB() && (mcb_segment==umb_start)) {
+                prev_mcb.SetType(DOS_MCB::MCBType::LastBlock);
+            }
+            dos_infoblock.SetUMBChainState(0);
+            break;
+        case 0x0001:    // link
+            ...
+```
+
+This is why DOS's `DOS=UMB` directive and a program's choice of memory allocation strategy (`DOS_SetMemAllocStrategy`) both matter at runtime, not just at boot: the XMS `XMS_ALLOCATE_UMB` handler — whose XMS function number is `0x10` — calls `DOS_SetMemAllocStrategy` with the strategy byte `0x40` ("search in UMBs only"), so whether a given request can even *see* UMB memory depends on that linkage being in place: whether a given allocation request can even *see* UMB memory depends on whether that region is currently spliced into the chain the allocator walks, and DOS toggles that linkage dynamically rather than deciding it once and fixing it for the whole session.
+
+It's worth seeing all three mechanisms composed in the one place a DOS user actually would have: a real `CONFIG.SYS`. This is a historical example of how the layers stack — not a configuration DOSBox-X executes as physical hardware would, but a record of the DOS-visible memory policy it emulates. A fairly typical late-DOS-era setup looked something like this:
+
+```text
+DEVICE=C:\DOS\HIMEM.SYS         ; XMS driver — manages extended memory + HMA
+DEVICE=C:\DOS\EMM386.EXE NOEMS  ; creates UMBs from extended memory
+                                 ; (NOEMS: no EMS emulation, UMBs only)
+DOS=HIGH,UMB                    ; load DOS kernel into the HMA; enable UMB use
+DEVICEHIGH=C:\DOS\MOUSE.SYS     ; load this driver into a UMB, not conventional RAM
+```
+
+Read top to bottom, this is nothing more than the three mechanisms this section just covered, loaded in the order they depend on each other: `HIMEM.SYS` has to be present before anything can claim the HMA or extended memory at all; `EMM386.EXE` needs extended memory to already be manageable before it can alias any of it into the UMA's unused gaps; `DOS=UMB` corresponds to invoking `DOS_LinkUMBsToMemChain()` to link the UMB region into the allocation chain; and only once all of that is in place does `DEVICEHIGH=` have anywhere to put a driver besides conventional memory. `EMM386.EXE` is also a good illustration of how blurry the line between these three mechanisms gets in practice — with `NOEMS` it does nothing but create UMBs, but the same driver, without that switch, can instead emulate an EMS page frame by bank-switching extended memory into upper memory, letting software that only knows how to speak `INT 67h` keep working even on a machine with no real EMS hardware behind it at all. One driver, depending on how it's invoked, can sit on either side of the EMS/UMB distinction this section has otherwise treated as a clean split.
+
+All three of EMS, XMS, and UMBs are, in the end, software-visible memory-management interfaces implemented using the underlying segmentation/TLB/PageHandler machinery this chapter has already covered — none of them invents a new low-level memory-access mechanism. UMBs in particular are a good illustration of just how far that layering can go without needing a new mechanism: the entire feature is a bookkeeping trick played on the same MCB chain DOS was already maintaining, applied to address ranges that DOS can make available as UMBs. That's a pattern worth keeping in mind as this book moves into device- and DOS-kernel-level chapters generally: DOSBox-X's memory model, built once in `mem.cpp` and `paging.cpp`, ends up being the substrate that nearly every higher subsystem builds on rather than works around.
+
+## 5.9 What This Buys You as a Reader {#what-this-buys-you-as-a-reader}
+
+Put the pieces of this chapter next to the two that came before. @chapter(time-in-dosbox-x) showed that the emulator represents guest time as several distinct timing domains and discretizes it into a cycle budget; @chapter(main-loop-and-event-scheduler)'s scheduler then hands that budget out in bounded, event-gated runs so the CPU never executes unconstrained. This chapter showed the parallel for memory: the TLB and `PageHandler` machinery keep the common case — a direct RAM access — as cheap as possible while diverting the exceptional case to a handler. In both areas the fast, common-case path is kept cheap while the slow, exceptional path (a device event fires; a page turns out to be backed by a device rather than RAM) is where the interesting emulation work — and all of the faithfulness to real, idiosyncratic 1980s and 90s hardware — actually lives.
+
+That's the lens to carry into the next several chapters. The CPU core, taken up next, is the thing that gets handed a cycle budget by @chapter(time-in-dosbox-x)'s concept of emulated time and @chapter(main-loop-and-event-scheduler)'s scheduler, and that addresses memory through this chapter's translation pipeline — and, as you'll see, it's built with the same fast-path/slow-path split on the inside. The `MOV [BX+SI], AL` we traced from `12460h` down to its backing page is exactly the kind of instruction that CPU core will fetch, decode, and execute, and every step of that execution is gated by the timing budget and the memory mapping this and the preceding chapters described.
+
+---
+
+*Next: @chapter(interpreter-core) — The Interpreter Core, where we follow a single instruction from fetch through decode to execution, and see how the address translation covered in this chapter, the cycle budgeting covered in @chapter(main-loop-and-event-scheduler), and the emulated time covered in @chapter(time-in-dosbox-x) all show up as constraints on that one instruction's execution.*
